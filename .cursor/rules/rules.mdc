@@ -1,0 +1,6 @@
+---
+description: 
+dont run terminal commands
+globs:
+alwaysApply: true
+---

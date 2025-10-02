@@ -1,0 +1,37 @@
+{
+  "name": "talentflip-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "server.js",
+  "scripts": {
+    "start": "node --experimental-loader ./loader.mjs server.js",
+    "dev": "nodemon --experimental-loader ./loader.mjs server.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:seed": "node prisma/seed.js"
+  },
+  "keywords": [
+    "talent",
+    "recruitment",
+    "api",
+    "backend"
+  ],
+  "author": "TalentFlip Team",
+  "license": "ISC",
+  "description": "Backend API for TalentFlip.ai - A talent recruitment platform",
+  "dependencies": {
+    "@prisma/client": "^6.16.2",
+    "bcryptjs": "^3.0.2",
+    "cors": "^2.8.5",
+    "express": "^5.1.0",
+    "jsonwebtoken": "^9.0.2",
+    "multer": "^2.0.2",
+    "nodemon": "^3.1.10",
+    "openai": "^5.23.0",
+    "prisma": "^6.16.2",
+    "stripe": "^18.5.0"
+  }
+}
