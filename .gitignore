@@ -12,7 +12,7 @@ yarn-error.log*
 .env.production.local
 
 # Config folder (contains secrets)
-config/
+src/config/index.js
 
 # Logs
 logs
