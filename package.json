@@ -1,10 +1,11 @@
 {
   "name": "talentflip-backend",
   "version": "1.0.0",
+  "type": "module",
   "main": "server.js",
   "scripts": {
      "build": "babel src --out-dir dist",
-  "start": "node dist/server.js",
+  "start": "node dist/app.js",
     "dev": "nodemon --experimental-loader ./loader.mjs server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "db:generate": "prisma generate",
