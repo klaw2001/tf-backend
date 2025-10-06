@@ -1,7 +1,6 @@
 {
   "name": "talentflip-backend",
   "version": "1.0.0",
-  "type": "module",
   "main": "server.js",
   "scripts": {
      "build": "babel src --out-dir dist",
