@@ -1,14 +1,23 @@
 import express from 'express';
 const router = express.Router();
 import * as recruiterController from './recruiterController.js';
-import { authMiddleware } from '../../../middleware/authMiddleware.js';
 
 // Public routes
 // TODO: Add public routes here
 
 // Protected routes
-router.use(authMiddleware); // Apply authentication middleware to all routes below
+// Note: Authentication is already handled by recruiterMiddleware in routes.js
 
-// TODO: Add protected routes here
+// File upload routes
+router.post('/upload/profile-image', recruiterController.uploadSingle, recruiterController.uploadProfileImage);
+
+// Profile management routes
+router.get('/profile', recruiterController.getProfile);
+router.post('/company-profile', recruiterController.addOrUpdateCompanyProfile);
+router.post('/individual-profile', recruiterController.addOrUpdateIndividualProfile);
+router.get('/company-profile', recruiterController.getCompanyProfile);
+router.get('/individual-profile', recruiterController.getIndividualProfile);
+
+// TODO: Add other protected routes here
 
 export default router;

@@ -30,6 +30,7 @@ model user {
 
   user_role role        @relation(fields: [role_id], references: [role_id])
   t_profile t_profile[]
+  r_profile r_profile[]
 }
 
 model role {
@@ -148,6 +149,61 @@ model t_skills {
   tp_profile t_profile @relation(fields: [tp_id], references: [tp_id])
 }
 
+model r_profile {
+  rp_id      Int           @id @default(autoincrement())
+  user_id    Int
+  rp_profile_image String?
+  rp_type    rp_type_types @default(company)
+  status     Boolean       @default(true)
+  created_at DateTime      @default(now())
+  updated_at DateTime      @updatedAt
+  created_by String?
+  updated_by String?
+
+  user user @relation(fields: [user_id], references: [user_id])
+
+  r_company_profile    r_company_profile?
+  r_individual_profile r_individual_profile?
+}
+
+model r_company_profile {
+  rc_id          Int     @id @default(autoincrement())
+  rp_id          Int     @unique
+  rc_name        String  @db.VarChar(255)
+  rc_website     String? @db.VarChar(255)
+  rc_industry    String? @db.VarChar(255)
+  rc_size        String? @db.VarChar(255) // e.g., "1-10", "11-50"
+  rc_role        String? @db.VarChar(255) // HR Manager, Founder, etc.
+  rc_description String? @db.Text
+
+  status     Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  created_by String?
+  updated_by String?
+
+  r_profile r_profile @relation(fields: [rp_id], references: [rp_id], onDelete: Cascade)
+}
+
+model r_individual_profile {
+  ri_id            Int     @id @default(autoincrement())
+  rp_id            Int     @unique
+  ri_full_name     String  @db.VarChar(255)
+  ri_email         String  @db.VarChar(255)
+  ri_mobile        String? @db.VarChar(255)
+  ri_linkedin_url  String?
+  ri_portfolio_url String?
+  ri_about         String? @db.Text
+
+  status     Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  created_by String?
+  updated_by String?
+
+  r_profile r_profile @relation(fields: [rp_id], references: [rp_id], onDelete: Cascade)
+}
+
 enum ta_work_location_types {
   Onsite
   Remote
@@ -163,4 +219,9 @@ enum ta_timezone_types {
   CST
   MST
   IST
+}
+
+enum rp_type_types {
+  company
+  individual
 }

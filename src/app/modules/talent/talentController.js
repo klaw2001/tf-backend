@@ -589,7 +589,8 @@ export const getAllTalentProfile = async (req, res) => {
           select: {
             user_id: true,
             user_email: true,
-            user_full_name: true
+            user_full_name: true,
+            user_role: true
           }
         }
         // Note: tp_resume is intentionally excluded
