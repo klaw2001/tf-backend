@@ -3,20 +3,20 @@ import cors from 'cors';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { PrismaClient } from '@prisma/client';
-import { port, environment, DATABASE_URL, CORS_ORIGIN, CORS_CREDENTIALS, MAX_FILE_SIZE } from '@/config/index.js';
+import { port, environment, DATABASE_URL, CORS_ORIGIN, CORS_CREDENTIALS, MAX_FILE_SIZE } from './config/index.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 // Import routes
-import routes from '@/routes.js';
+import routes from './routes.js';
 
 // Create Express app
 const app = express();
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:4000'],
+  origin: ['http://localhost:3000', 'http://localhost:4000', 'https://stg.talentflip.ai'],
   credentials: true
 }));
 

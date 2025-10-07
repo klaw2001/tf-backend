@@ -1,7 +1,7 @@
 import express from 'express';
 const router = express.Router();
 import * as recruiterController from './recruiterController.js';
-import { authMiddleware } from '@/middleware/authMiddleware.js';
+import { authMiddleware } from '../../../middleware/authMiddleware.js';
 
 // Public routes
 // TODO: Add public routes here

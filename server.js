@@ -1,5 +1,5 @@
-import app from '@/app.js';
-import { port, environment } from '@/config/index.js';
+import app from './src/app.js';
+import { port, environment } from './src/config/index.js';
 
 // Start server
 app.listen(port, () => {
