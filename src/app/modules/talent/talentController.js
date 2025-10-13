@@ -7,6 +7,7 @@ import statusType from '../../enums/statusTypes.js';
 import { PrismaClient } from '@prisma/client';
 import OpenAI from 'openai';
 import { generateRecommendations } from './talentHelpers.js';
+import { createNotification } from '../../helpers/notificationHelper.js';
 
 const prisma = new PrismaClient();
 
@@ -1781,6 +1782,478 @@ export const saveTalentSkills = async (req, res) => {
   } catch (error) {
     console.error('Error saving talent skills:', error);
     return sendResponse(res, 'error', { error: error.message }, 'Error saving talent skills', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
+// Intent management APIs
+export const getReceivedIntents = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    // Get talent profile
+    const talentProfile = await prisma.t_profile.findFirst({
+      where: { user_id: userId, status: true }
+    });
+
+    if (!talentProfile) {
+      return sendResponse(res, 'error', null, 'Talent profile not found', statusType.NOT_FOUND);
+    }
+
+    const { page = 1, limit = 10, intent_status = 'all' } = req.query;
+    const pageNum = parseInt(page);
+    const limitNum = parseInt(limit);
+    const offset = (pageNum - 1) * limitNum;
+
+    // Build where clause
+    const whereClause = {
+      tp_id: talentProfile.tp_id,
+      status: true
+    };
+
+    if (intent_status !== 'all') {
+      whereClause.ritm_intent_status = intent_status;
+    }
+
+    // Get total count
+    const totalCount = await prisma.r_intent_talent_mapper.count({
+      where: whereClause
+    });
+
+    // Get intent mappings
+    const intentMappings = await prisma.r_intent_talent_mapper.findMany({
+      where: whereClause,
+      orderBy: { created_at: 'desc' },
+      skip: offset,
+      take: limitNum,
+      include: {
+        r_intent: {
+          include: {
+            user: {
+              include: {
+                r_profile: {
+                  include: {
+                    r_company_profile: true,
+                    r_individual_profile: true
+                  }
+                }
+              }
+            }
+          }
+        },
+        r_intent_timeline: {
+          orderBy: { created_at: 'asc' }
+        }
+      }
+    });
+
+    // Transform data
+    const transformedIntents = intentMappings.map(mapping => {
+      const intent = mapping.r_intent;
+      const recruiter = intent.user.r_profile?.[0];
+      const skillsArray = JSON.parse(intent.ri_skills_required);
+
+      return {
+        ritm_id: mapping.ritm_id,
+        intent_status: mapping.ritm_intent_status,
+        sent_at: mapping.created_at,
+        intent: {
+          ri_id: intent.ri_id,
+          job_title: intent.ri_job_title,
+          employment_type: intent.ri_employment_type,
+          work_mode: intent.ri_work_mode,
+          location: intent.ri_location,
+          experience_level: intent.ri_experience_level,
+          compensation_range: intent.ri_compensation_range,
+          currency: intent.ri_currency,
+          skills_required: skillsArray,
+          job_description: intent.ri_job_description,
+          personalised_message: intent.ri_personalised_message,
+          next_step: intent.ri_next_step,
+          preferred_timeline: intent.ri_preferred_timeline,
+          response_deadline: intent.ri_response_deadline
+        },
+        recruiter: {
+          name: intent.user.user_full_name,
+          email: intent.user.user_email,
+          profile_image: recruiter?.rp_profile_image,
+          company_name: recruiter?.r_company_profile?.rc_name,
+          company_website: recruiter?.r_company_profile?.rc_website
+        },
+        timeline: mapping.r_intent_timeline.map(t => ({
+          status: t.rit_status,
+          notes: t.rit_notes,
+          created_at: t.created_at
+        }))
+      };
+    });
+
+    // Calculate pagination info
+    const totalPages = Math.ceil(totalCount / limitNum);
+    const hasNextPage = pageNum < totalPages;
+    const hasPrevPage = pageNum > 1;
+
+    const responseData = {
+      intents: transformedIntents,
+      pagination: {
+        current_page: pageNum,
+        total_pages: totalPages,
+        total_count: totalCount,
+        per_page: limitNum,
+        has_next_page: hasNextPage,
+        has_prev_page: hasPrevPage
+      }
+    };
+
+    return sendResponse(res, 'success', responseData, 'Intents retrieved successfully', statusType.SUCCESS);
+
+  } catch (error) {
+    console.error('Error getting received intents:', error);
+    return sendResponse(res, 'error', { error: error.message }, 'Error getting received intents', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
+export const acceptIntent = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    const { ritmId } = req.params;
+    const { notes } = req.body;
+
+    if (!ritmId) {
+      return sendResponse(res, 'error', null, 'Intent mapping ID is required', statusType.BAD_REQUEST);
+    }
+
+    // Get talent profile
+    const talentProfile = await prisma.t_profile.findFirst({
+      where: { user_id: userId, status: true }
+    });
+
+    if (!talentProfile) {
+      return sendResponse(res, 'error', null, 'Talent profile not found', statusType.NOT_FOUND);
+    }
+
+    // Check if intent mapping exists and belongs to talent
+    const mapping = await prisma.r_intent_talent_mapper.findFirst({
+      where: {
+        ritm_id: parseInt(ritmId),
+        tp_id: talentProfile.tp_id,
+        status: true
+      },
+      include: {
+        r_intent: {
+          select: {
+            ri_job_title: true,
+            user_id: true,
+            user: {
+              select: {
+                user_full_name: true
+              }
+            }
+          }
+        },
+        t_profile: {
+          select: {
+            user: {
+              select: {
+                user_full_name: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!mapping) {
+      return sendResponse(res, 'error', null, 'Intent mapping not found', statusType.NOT_FOUND);
+    }
+
+    // Check if already accepted or rejected
+    if (mapping.ritm_intent_status === 'Intent_Accepted') {
+      return sendResponse(res, 'error', null, 'Intent already accepted', statusType.BAD_REQUEST);
+    }
+
+    if (mapping.ritm_intent_status === 'Intent_Rejected') {
+      return sendResponse(res, 'error', null, 'Cannot accept a rejected intent', statusType.BAD_REQUEST);
+    }
+
+    // Update mapping and create timeline record in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Update mapping status
+      const updatedMapping = await tx.r_intent_talent_mapper.update({
+        where: { ritm_id: parseInt(ritmId) },
+        data: {
+          ritm_intent_status: 'Intent_Accepted',
+          updated_by: userId.toString()
+        }
+      });
+
+      // Create timeline record
+      const timelineRecord = await tx.r_intent_timeline.create({
+        data: {
+          ritm_id: parseInt(ritmId),
+          rit_status: 'Intent_Accepted',
+          rit_notes: notes || 'Intent accepted by talent',
+          created_by: userId.toString()
+        }
+      });
+
+      return { updatedMapping, timelineRecord };
+    });
+
+    // Create notification for recruiter
+    try {
+      await createNotification(
+        mapping.r_intent.user_id,
+        'intent_accepted',
+        'Intent Accepted!',
+        `${mapping.t_profile.user.user_full_name} accepted your intent for ${mapping.r_intent.ri_job_title}`,
+        null
+      );
+    } catch (notificationError) {
+      console.error('Error creating notification:', notificationError);
+      // Don't fail the request if notification fails
+    }
+
+    // Create chat conversation when intent is accepted
+    try {
+      const conversation = await prisma.chat_conversation.create({
+        data: {
+          ritm_id: parseInt(ritmId),
+          recruiter_user_id: mapping.r_intent.user_id,
+          talent_user_id: userId,
+        }
+      });
+
+      // Emit socket event to both users
+      try {
+        const { getIO } = await import('../../../socket/socketServer.js');
+        const io = getIO();
+        
+        io.to(`user:${mapping.r_intent.user_id}`).emit('chat_created', {
+          conversationId: conversation.cc_id,
+          withUser: {
+            user_id: userId,
+            user_full_name: mapping.t_profile.user.user_full_name
+          },
+          jobTitle: mapping.r_intent.ri_job_title
+        });
+
+        io.to(`user:${userId}`).emit('chat_created', {
+          conversationId: conversation.cc_id,
+          withUser: {
+            user_id: mapping.r_intent.user_id,
+            user_full_name: mapping.r_intent.user.user_full_name
+          },
+          jobTitle: mapping.r_intent.ri_job_title
+        });
+      } catch (socketError) {
+        console.error('Error emitting socket event:', socketError);
+        // Don't fail if socket emission fails
+      }
+      
+    } catch (chatError) {
+      console.error('Error creating chat conversation:', chatError);
+      // Don't fail the request if chat creation fails
+    }
+
+    return sendResponse(res, 'success', result, 'Intent accepted successfully', statusType.SUCCESS);
+
+  } catch (error) {
+    console.error('Error accepting intent:', error);
+    return sendResponse(res, 'error', { error: error.message }, 'Error accepting intent', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
+export const rejectIntent = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    const { ritmId } = req.params;
+    const { notes } = req.body;
+
+    if (!ritmId) {
+      return sendResponse(res, 'error', null, 'Intent mapping ID is required', statusType.BAD_REQUEST);
+    }
+
+    // Get talent profile
+    const talentProfile = await prisma.t_profile.findFirst({
+      where: { user_id: userId, status: true }
+    });
+
+    if (!talentProfile) {
+      return sendResponse(res, 'error', null, 'Talent profile not found', statusType.NOT_FOUND);
+    }
+
+    // Check if intent mapping exists and belongs to talent
+    const mapping = await prisma.r_intent_talent_mapper.findFirst({
+      where: {
+        ritm_id: parseInt(ritmId),
+        tp_id: talentProfile.tp_id,
+        status: true
+      },
+      include: {
+        r_intent: {
+          select: {
+            ri_job_title: true,
+            user_id: true,
+            user: {
+              select: {
+                user_full_name: true
+              }
+            }
+          }
+        },
+        t_profile: {
+          select: {
+            user: {
+              select: {
+                user_full_name: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!mapping) {
+      return sendResponse(res, 'error', null, 'Intent mapping not found', statusType.NOT_FOUND);
+    }
+
+    // Check if already accepted or rejected
+    if (mapping.ritm_intent_status === 'Intent_Rejected') {
+      return sendResponse(res, 'error', null, 'Intent already rejected', statusType.BAD_REQUEST);
+    }
+
+    if (mapping.ritm_intent_status === 'Intent_Accepted') {
+      return sendResponse(res, 'error', null, 'Cannot reject an accepted intent', statusType.BAD_REQUEST);
+    }
+
+    // Update mapping and create timeline record in a transaction
+    const result = await prisma.$transaction(async (tx) => {
+      // Update mapping status
+      const updatedMapping = await tx.r_intent_talent_mapper.update({
+        where: { ritm_id: parseInt(ritmId) },
+        data: {
+          ritm_intent_status: 'Intent_Rejected',
+          updated_by: userId.toString()
+        }
+      });
+
+      // Create timeline record
+      const timelineRecord = await tx.r_intent_timeline.create({
+        data: {
+          ritm_id: parseInt(ritmId),
+          rit_status: 'Intent_Rejected',
+          rit_notes: notes || 'Intent rejected by talent',
+          created_by: userId.toString()
+        }
+      });
+
+      return { updatedMapping, timelineRecord };
+    });
+
+    // Create notification for recruiter
+    try {
+      await createNotification(
+        mapping.r_intent.user_id,
+        'intent_rejected',
+        'Intent Declined',
+        `${mapping.t_profile.user.user_full_name} declined your intent for ${mapping.r_intent.ri_job_title}`,
+        null
+      );
+    } catch (notificationError) {
+      console.error('Error creating notification:', notificationError);
+      // Don't fail the request if notification fails
+    }
+
+    return sendResponse(res, 'success', result, 'Intent rejected successfully', statusType.SUCCESS);
+
+  } catch (error) {
+    console.error('Error rejecting intent:', error);
+    return sendResponse(res, 'error', { error: error.message }, 'Error rejecting intent', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
+export const getIntentTimeline = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    const { ritmId } = req.params;
+
+    if (!ritmId) {
+      return sendResponse(res, 'error', null, 'Intent mapping ID is required', statusType.BAD_REQUEST);
+    }
+
+    // Get talent profile
+    const talentProfile = await prisma.t_profile.findFirst({
+      where: { user_id: userId, status: true }
+    });
+
+    if (!talentProfile) {
+      return sendResponse(res, 'error', null, 'Talent profile not found', statusType.NOT_FOUND);
+    }
+
+    // Check if intent mapping exists and belongs to talent
+    const mapping = await prisma.r_intent_talent_mapper.findFirst({
+      where: {
+        ritm_id: parseInt(ritmId),
+        tp_id: talentProfile.tp_id,
+        status: true
+      },
+      include: {
+        r_intent: {
+          select: {
+            ri_job_title: true,
+            ri_employment_type: true,
+            ri_compensation_range: true,
+            ri_currency: true
+          }
+        },
+        r_intent_timeline: {
+          orderBy: { created_at: 'asc' },
+          where: { status: true }
+        }
+      }
+    });
+
+    if (!mapping) {
+      return sendResponse(res, 'error', null, 'Intent mapping not found', statusType.NOT_FOUND);
+    }
+
+    const responseData = {
+      ritm_id: mapping.ritm_id,
+      current_status: mapping.ritm_intent_status,
+      intent_summary: {
+        job_title: mapping.r_intent.ri_job_title,
+        employment_type: mapping.r_intent.ri_employment_type,
+        compensation: `${mapping.r_intent.ri_compensation_range} ${mapping.r_intent.ri_currency}`
+      },
+      timeline: mapping.r_intent_timeline.map(t => ({
+        rit_id: t.rit_id,
+        status: t.rit_status,
+        notes: t.rit_notes,
+        created_at: t.created_at,
+        created_by: t.created_by
+      }))
+    };
+
+    return sendResponse(res, 'success', responseData, 'Timeline retrieved successfully', statusType.SUCCESS);
+
+  } catch (error) {
+    console.error('Error getting intent timeline:', error);
+    return sendResponse(res, 'error', { error: error.message }, 'Error getting intent timeline', statusType.INTERNAL_SERVER_ERROR);
   }
 };
 

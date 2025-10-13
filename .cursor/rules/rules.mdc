@@ -1,6 +1,12 @@
 ---
-description: 
-dont run terminal commands
+description: >
+  Don't run terminal commands by default.
+  But when running Prisma db push, use Node 22 via nvm.
 globs:
-alwaysApply: true
+  alwaysApply: true
+
+rules:
+  - match: "prisma db push"
+    command: "nvm use 22 && npx prisma db push"
+    allow: true
 ---

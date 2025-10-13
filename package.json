@@ -4,7 +4,7 @@
   "main": "src/server.js",
   "type": "module",
   "scripts": {
-  "build": "babel src --out-dir dist",
+    "build": "babel src --out-dir dist",
     "start": "node dist/server.js",
     "dev": "nodemon --experimental-loader ./loader.mjs src/server.js",
     "test": "echo \"Error: no test specified\" && exit 1",
@@ -33,6 +33,7 @@
     "nodemon": "^3.1.10",
     "openai": "^5.23.0",
     "prisma": "^6.16.2",
+    "socket.io": "^4.8.1",
     "stripe": "^18.5.0"
   },
   "devDependencies": {

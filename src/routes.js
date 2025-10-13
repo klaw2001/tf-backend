@@ -7,10 +7,13 @@ import homeRoutes from './app/modules/home/homeRoutes.js';
 import talentRoutes from './app/modules/talent/talentRoutes.js';
 import recruiterRoutes from './app/modules/recruiter/recruiterRoutes.js';
 import adminRoutes from './app/modules/admin/adminRoutes.js';
+import commonRoutes from './app/modules/common/commonRoutes.js';
+import chatRoutes from './app/modules/chat/chatRoutes.js';
 import datamanipRoutes from './app/modules/datamanip/datamanip.js';
 import talentMiddleware from './middleware/talentMiddleware.js';
 import recruiterMiddleware from './middleware/recruiterMiddleware.js';
 import adminMiddleware from './middleware/adminMiddleware.js';
+import commonMiddleware from './middleware/commonMiddleware.js';
 import { authMiddleware } from './middleware/authMiddleware.js';
 
 // Health check route
@@ -28,6 +31,8 @@ router.use('/home', authMiddleware, homeRoutes);
 router.use('/talent', talentMiddleware, talentRoutes);
 router.use('/recruiter', recruiterMiddleware, recruiterRoutes);
 router.use('/admin', adminMiddleware, adminRoutes);
+router.use('/common', commonMiddleware, commonRoutes);
+router.use('/chat', commonMiddleware, chatRoutes);
 router.use('/danger',datamanipRoutes);
 
 // TODO: Add more routes as needed

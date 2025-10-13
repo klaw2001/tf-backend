@@ -31,6 +31,11 @@ model user {
   user_role role        @relation(fields: [role_id], references: [role_id])
   t_profile t_profile[]
   r_profile r_profile[]
+  r_intent  r_intent[]
+  r_transaction r_transaction[]
+  r_service_purchase_mapper r_service_purchase_mapper[]
+  r_favourite_talents r_favourite_talents[]
+  notification notification[]
 }
 
 model role {
@@ -63,6 +68,8 @@ model t_profile {
   t_availability t_availability[]
   t_reviews      t_reviews[]
   t_skills       t_skills[]
+  r_intent_talent_mapper r_intent_talent_mapper[]
+  r_favourite_talents r_favourite_talents[]
 }
 
 model t_projects {
@@ -204,6 +211,22 @@ model r_individual_profile {
   r_profile r_profile @relation(fields: [rp_id], references: [rp_id], onDelete: Cascade)
 }
 
+model r_favourite_talents {
+  rft_id     Int      @id @default(autoincrement())
+  user_id    Int      // recruiter user id
+  tp_id      Int      // talent profile id
+  status     Boolean  @default(true)
+  created_at DateTime @default(now())
+  updated_at DateTime @updatedAt
+  created_by String?
+  updated_by String?
+
+  user      user      @relation(fields: [user_id], references: [user_id])
+  t_profile t_profile @relation(fields: [tp_id], references: [tp_id])
+
+  @@unique([user_id, tp_id])
+}
+
 enum ta_work_location_types {
   Onsite
   Remote
@@ -224,4 +247,242 @@ enum ta_timezone_types {
 enum rp_type_types {
   company
   individual
+}
+
+model r_intent {
+  ri_id                    Int      @id @default(autoincrement())
+  user_id                  Int      // recruiter user id
+  ri_job_title             String   @db.VarChar(255)
+  ri_employment_type       ri_employment_type_types
+  ri_work_mode             ri_work_mode_types
+  ri_location              String?  @db.VarChar(255)
+  ri_experience_level      ri_experience_level_types
+  ri_compensation_range    String   @db.VarChar(255)
+  ri_currency              ri_currency_types
+  ri_skills_required       String   @db.Text // JSON array of skills
+  ri_job_description       String   @db.Text
+  ri_personalised_message  String   @db.Text
+  ri_next_step             ri_next_step_types
+  ri_preferred_timeline    String?  @db.VarChar(255)
+  ri_response_deadline     DateTime?
+  status                   Boolean  @default(true)
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+  created_by               String?
+  updated_by               String?
+
+  user user @relation(fields: [user_id], references: [user_id])
+  r_intent_talent_mapper   r_intent_talent_mapper[]
+}
+
+model r_intent_talent_mapper {
+  ritm_id      Int      @id @default(autoincrement())
+  ri_id        Int      // intent id
+  tp_id        Int      // talent profile id
+  ritm_intent_status rit_status_types? @default(Intent_Submitted) // current intent status
+  status       Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+  created_by   String?
+  updated_by   String?
+
+  r_intent     r_intent   @relation(fields: [ri_id], references: [ri_id])
+  t_profile    t_profile  @relation(fields: [tp_id], references: [tp_id])
+  r_intent_timeline r_intent_timeline[]
+  chat_conversation chat_conversation?
+}
+
+enum ri_employment_type_types {
+  Full_time
+  Contract
+  Internship
+}
+
+enum ri_work_mode_types {
+  Remote
+  Hybrid
+  Onsite
+}
+
+enum ri_experience_level_types {
+  Junior
+  Mid
+  Senior
+  Lead
+}
+
+enum ri_currency_types {
+  INR
+  USD
+  EUR
+  GBP
+  CAD
+  AUD
+}
+
+enum ri_next_step_types {
+  Call
+  Interview
+  Coding_Challenge
+  Intro_Chat
+}
+
+enum rit_status_types {
+  Intent_Submitted
+  Intent_Accepted
+  Intent_Rejected
+  Project_Started
+}
+
+model r_intent_timeline {
+  rit_id              Int      @id @default(autoincrement())
+  ritm_id             Int      // intent talent mapper id
+  rit_status          rit_status_types
+  rit_notes           String?  @db.Text // optional notes for each status change
+  status              Boolean  @default(true)
+  created_at          DateTime @default(now())
+  updated_at          DateTime @updatedAt
+  created_by          String?
+  updated_by          String?
+
+  r_intent_talent_mapper r_intent_talent_mapper @relation(fields: [ritm_id], references: [ritm_id])
+}
+
+model r_service {
+  rs_id                    Int      @id @default(autoincrement())
+  rs_name                  String   @db.VarChar(255)
+  rs_inr_price             Decimal  @db.Decimal(10, 2)
+  rs_international_price   Decimal  @db.Decimal(10, 2)
+  rs_description           String?  @db.Text
+  rs_currency_international String  @default("USD") @db.VarChar(10) // USD, EUR, GBP, etc.
+  status                   Boolean  @default(true)
+  created_at               DateTime @default(now())
+  updated_at               DateTime @updatedAt
+  created_by               String?
+  updated_by               String?
+
+  r_service_feature r_service_feature[]
+  r_transaction     r_transaction[]
+}
+
+model r_service_feature {
+  rsf_id      Int      @id @default(autoincrement())
+  rs_id       Int      // service id
+  rsf_name    String   @db.VarChar(255)
+  status      Boolean  @default(true)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+  created_by  String?
+  updated_by  String?
+
+  r_service r_service @relation(fields: [rs_id], references: [rs_id], onDelete: Cascade)
+}
+
+model r_transaction {
+  rt_id                      Int       @id @default(autoincrement())
+  user_id                    Int       // recruiter user id
+  rs_id                      Int       // service id
+  rt_amount                  Decimal   @db.Decimal(10, 2)
+  rt_currency                String    @db.VarChar(10) // INR, USD, EUR, etc.
+  rt_stripe_payment_intent_id String?  @db.VarChar(255)
+  rt_stripe_session_id       String?   @db.VarChar(255)
+  rt_payment_status          rt_payment_status_types @default(Pending)
+  rt_payment_method          String?   @db.VarChar(50)
+  rt_transaction_date        DateTime?
+  status                     Boolean   @default(true)
+  created_at                 DateTime  @default(now())
+  updated_at                 DateTime  @updatedAt
+  created_by                 String?
+  updated_by                 String?
+
+  user                      user                       @relation(fields: [user_id], references: [user_id])
+  r_service                 r_service                  @relation(fields: [rs_id], references: [rs_id])
+  r_service_purchase_mapper r_service_purchase_mapper[]
+}
+
+model r_service_purchase_mapper {
+  rspm_id            Int      @id @default(autoincrement())
+  rt_id              Int      // transaction id
+  user_id            Int      // recruiter user id
+  rspm_purchase_date DateTime @default(now())
+  rspm_expiry_date   DateTime? // optional expiry date for subscription services
+  rspm_is_active     Boolean  @default(true)
+  status             Boolean  @default(true)
+  created_at         DateTime @default(now())
+  updated_at         DateTime @updatedAt
+  created_by         String?
+  updated_by         String?
+
+  r_transaction r_transaction @relation(fields: [rt_id], references: [rt_id])
+  user          user          @relation(fields: [user_id], references: [user_id])
+}
+
+enum rt_payment_status_types {
+  Pending
+  Processing
+  Completed
+  Failed
+  Refunded
+  Cancelled
+}
+
+model notification {
+  notification_id      Int      @id @default(autoincrement())
+  user_id              Int
+  notification_name    String?  @db.VarChar(255)
+  notification_heading String?  @db.VarChar(255)
+  notification_text    String?  @db.VarChar(255)
+  notification_image   String?  @db.VarChar(255)
+  is_read              Boolean  @default(false)
+  status               Boolean  @default(true)
+  created_at           DateTime @default(now())
+  updated_at           DateTime @updatedAt
+
+  user user @relation(fields: [user_id], references: [user_id])
+}
+
+// Chat conversation between recruiter and talent
+model chat_conversation {
+  cc_id                      Int       @id @default(autoincrement())
+  ritm_id                    Int       @unique // links to r_intent_talent_mapper
+  recruiter_user_id          Int       // recruiter user id
+  talent_user_id             Int       // talent user id
+  cc_last_message            String?   @db.Text
+  cc_last_message_at         DateTime?
+  cc_unread_count_recruiter  Int       @default(0) // unread messages for recruiter
+  cc_unread_count_talent     Int       @default(0) // unread messages for talent
+  status                     Boolean   @default(true)
+  created_at                 DateTime  @default(now())
+  updated_at                 DateTime  @updatedAt
+  
+  r_intent_talent_mapper r_intent_talent_mapper @relation(fields: [ritm_id], references: [ritm_id])
+  chat_messages          chat_message[]
+  
+  @@index([recruiter_user_id])
+  @@index([talent_user_id])
+}
+
+model chat_message {
+  cm_id           Int      @id @default(autoincrement())
+  cc_id           Int      // conversation id
+  sender_user_id  Int      // who sent the message
+  cm_message      String   @db.Text
+  cm_message_type cm_message_types @default(Text)
+  cm_file_url     String?  @db.VarChar(255)
+  cm_is_read      Boolean  @default(false)
+  cm_read_at      DateTime?
+  status          Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+  
+  chat_conversation chat_conversation @relation(fields: [cc_id], references: [cc_id], onDelete: Cascade)
+  
+  @@index([cc_id])
+  @@index([sender_user_id])
+}
+
+enum cm_message_types {
+  Text
+  File
+  Image
 }

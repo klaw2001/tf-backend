@@ -10,6 +10,7 @@ const __dirname = path.dirname(__filename);
 
 // Import routes
 import routes from './routes.js';
+import * as recruiterController from './app/modules/recruiter/recruiterController.js';
 
 // Create Express app
 const app = express();
@@ -19,6 +20,9 @@ app.use(cors({
   origin: ['http://localhost:3000', 'http://localhost:4000', 'https://stg.talentflip.ai'],
   credentials: true
 }));
+
+// Stripe webhook route (must be before express.json middleware to access raw body)
+app.post('/api/webhook/stripe', express.raw({ type: 'application/json' }), recruiterController.handleStripeWebhook);
 
 app.use(express.json({ limit: MAX_FILE_SIZE }));
 app.use(express.urlencoded({ extended: true, limit: MAX_FILE_SIZE }));
