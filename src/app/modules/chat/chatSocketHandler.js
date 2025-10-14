@@ -1,6 +1,24 @@
 import { PrismaClient } from '@prisma/client';
+import { createNotification } from '../../helpers/notificationHelper.js';
+import { sendChatMessageEmail } from '../../helpers/emailHelper.js';
 
 const prisma = new PrismaClient();
+
+/**
+ * Check if a user is currently connected to socket
+ * @param {Object} io - Socket.io instance
+ * @param {Number} userId - User ID to check
+ * @returns {Promise<Boolean>} True if user is online
+ */
+const isUserOnline = async (io, userId) => {
+  try {
+    const sockets = await io.in(`user:${userId}`).fetchSockets();
+    return sockets.length > 0;
+  } catch (error) {
+    console.error('Error checking user online status:', error);
+    return false;
+  }
+};
 
 export const handleChatEvents = (socket, io) => {
   
@@ -38,8 +56,29 @@ export const handleChatEvents = (socket, io) => {
 
       if (conversation) {
         socket.join(`conversation:${conversationIdInt}`);
+        
+        // Mark undelivered messages as delivered when user joins conversation
+        await prisma.chat_message.updateMany({
+          where: {
+            cc_id: conversationIdInt,
+            sender_user_id: { not: socket.user.user_id },
+            cm_is_delivered: false
+          },
+          data: {
+            cm_is_delivered: true,
+            cm_delivered_at: new Date()
+          }
+        });
+
         socket.emit('joined_conversation', { conversationId: conversationIdInt });
         console.log(`✅ User ${socket.user.user_id} joined conversation ${conversationIdInt}`);
+        
+        // Notify sender that messages were delivered
+        const senderUserId = conversation.recruiter_user_id === socket.user.user_id 
+          ? conversation.talent_user_id 
+          : conversation.recruiter_user_id;
+        
+        io.to(`user:${senderUserId}`).emit('messages_delivered', { conversationId: conversationIdInt });
       } else {
         socket.emit('error', { message: 'Conversation not found or access denied' });
         console.error(`❌ User ${socket.user.user_id} failed to join conversation ${conversationIdInt} - not found`);
@@ -132,10 +171,31 @@ export const handleChatEvents = (socket, io) => {
 
       console.log(`Message sent in conversation ${conversationIdInt} by user ${socket.user.user_id}`);
 
+      // Check if recipient is in the conversation room (online)
+      const recipientUserId = conversation.recruiter_user_id === socket.user.user_id 
+        ? conversation.talent_user_id 
+        : conversation.recruiter_user_id;
+      
+      const recipientSockets = await io.in(`conversation:${conversationIdInt}`).fetchSockets();
+      const isRecipientOnline = recipientSockets.some(s => s.user.user_id === recipientUserId);
+
+      // If recipient is online in the conversation, mark as delivered immediately
+      let messageWithStatus = { ...newMessage };
+      if (isRecipientOnline) {
+        const updatedMessage = await prisma.chat_message.update({
+          where: { cm_id: newMessage.cm_id },
+          data: {
+            cm_is_delivered: true,
+            cm_delivered_at: new Date()
+          }
+        });
+        messageWithStatus = updatedMessage;
+      }
+
       // Emit to conversation room
       io.to(`conversation:${conversationIdInt}`).emit('new_message', {
         message: {
-          ...newMessage,
+          ...messageWithStatus,
           sender: {
             user_id: socket.user.user_id,
             user_full_name: socket.user.user_full_name
@@ -143,20 +203,136 @@ export const handleChatEvents = (socket, io) => {
         }
       });
 
-      // Emit to recipient's personal room for notification
-      const recipientUserId = conversation.recruiter_user_id === socket.user.user_id 
-        ? conversation.talent_user_id 
-        : conversation.recruiter_user_id;
-      
+      // Emit to recipient's personal room for real-time notification
       io.to(`user:${recipientUserId}`).emit('message_notification', {
         conversationId: conversationIdInt,
         message: trimmedMessage.substring(0, 50),
         sender_name: socket.user.user_full_name
       });
 
+      // ✨ Check if recipient is online, if not create database notification & send email
+      const recipientOnline = await isUserOnline(io, recipientUserId);
+      
+      if (!recipientOnline) {
+        try {
+          // Create in-app notification for offline user
+          await createNotification(
+            recipientUserId,
+            'new_chat_message',
+            `New message from ${socket.user.user_full_name}`,
+            trimmedMessage.substring(0, 100),
+            null
+          );
+          
+          console.log(`📧 Created offline notification for user ${recipientUserId}`);
+          
+          // Send email notification
+          const recipientUser = await prisma.user.findUnique({
+            where: { user_id: recipientUserId },
+            select: { 
+              user_id: true, 
+              user_email: true, 
+              user_full_name: true 
+            }
+          });
+          
+          if (recipientUser) {
+            await sendChatMessageEmail(
+              recipientUser,
+              socket.user.user_full_name,
+              trimmedMessage.substring(0, 200),
+              conversationIdInt
+            );
+            console.log(`📬 Email notification sent to ${recipientUser.user_email}`);
+          }
+          
+          // 🔔 TODO: Push Notification (Uncomment when FCM/APNS is configured)
+          // const pushNotificationService = await import('../../services/pushNotificationService.js');
+          // await pushNotificationService.sendPushNotification(recipientUserId, {
+          //   title: socket.user.user_full_name,
+          //   body: trimmedMessage.substring(0, 100),
+          //   icon: socket.user.profile_image || '/default-avatar.png',
+          //   data: {
+          //     type: 'chat_message',
+          //     conversationId: conversationIdInt,
+          //     senderId: socket.user.user_id
+          //   }
+          // });
+          // console.log(`🔔 Push notification sent to user ${recipientUserId}`);
+          
+        } catch (notificationError) {
+          // Don't fail the message send if notification fails
+          console.error('Error sending offline notifications:', notificationError);
+        }
+      }
+
     } catch (error) {
       console.error('Error sending message:', error);
       socket.emit('error', { message: 'Failed to send message', details: error.message });
+    }
+  });
+
+  // Mark messages as delivered
+  socket.on('mark_as_delivered', async (data) => {
+    try {
+      const { conversationId } = data;
+      
+      // Validate conversationId
+      if (!conversationId) {
+        socket.emit('error', { message: 'Conversation ID is required' });
+        console.error('Mark as delivered error: conversationId is missing', data);
+        return;
+      }
+
+      // Parse conversationId to integer if it's a string
+      const conversationIdInt = parseInt(conversationId);
+      if (isNaN(conversationIdInt)) {
+        socket.emit('error', { message: 'Invalid conversation ID format' });
+        console.error('Mark as delivered error: conversationId is not a number', conversationId);
+        return;
+      }
+      
+      const conversation = await prisma.chat_conversation.findFirst({
+        where: {
+          cc_id: conversationIdInt,
+          OR: [
+            { recruiter_user_id: socket.user.user_id },
+            { talent_user_id: socket.user.user_id }
+          ]
+        }
+      });
+
+      if (!conversation) {
+        console.error(`Conversation ${conversationIdInt} not found for user ${socket.user.user_id}`);
+        return;
+      }
+
+      // Mark undelivered messages as delivered
+      await prisma.chat_message.updateMany({
+        where: {
+          cc_id: conversationIdInt,
+          sender_user_id: { not: socket.user.user_id },
+          cm_is_delivered: false
+        },
+        data: {
+          cm_is_delivered: true,
+          cm_delivered_at: new Date()
+        }
+      });
+
+      console.log(`Messages marked as delivered in conversation ${conversationIdInt} by user ${socket.user.user_id}`);
+      socket.emit('messages_marked_delivered', { conversationId: conversationIdInt });
+      
+      // Notify the other user that messages were delivered
+      const senderUserId = conversation.recruiter_user_id === socket.user.user_id 
+        ? conversation.talent_user_id 
+        : conversation.recruiter_user_id;
+      
+      io.to(`user:${senderUserId}`).emit('messages_delivered', { conversationId: conversationIdInt });
+      
+    } catch (error) {
+      console.error('Error marking messages as delivered:', error);
+      socket.emit('error', { message: 'Failed to mark messages as delivered', details: error.message });
     }
   });
 
@@ -197,7 +373,7 @@ export const handleChatEvents = (socket, io) => {
 
       const isRecruiter = conversation.recruiter_user_id === socket.user.user_id;
 
-      // Mark unread messages as read
+      // Mark unread messages as read (and delivered if not already)
       await prisma.$transaction(async (tx) => {
         await tx.chat_message.updateMany({
           where: {
@@ -206,6 +382,8 @@ export const handleChatEvents = (socket, io) => {
             cm_is_read: false
           },
           data: {
+            cm_is_delivered: true,
+            cm_delivered_at: new Date(),
             cm_is_read: true,
             cm_read_at: new Date()
           }

@@ -33,6 +33,5 @@ router.post('/skills', talentController.saveTalentSkills);
 router.get('/intents', talentController.getReceivedIntents);
 router.post('/intents/:ritmId/accept', talentController.acceptIntent);
 router.post('/intents/:ritmId/reject', talentController.rejectIntent);
-router.get('/intents/timeline/:ritmId', talentController.getIntentTimeline);
 
 export default router;

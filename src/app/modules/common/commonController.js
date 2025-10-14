@@ -232,10 +232,114 @@ export const getUnreadCount = async (req, res) => {
 };
 
 
+/**
+ * Get intent timeline - accessible to both talent and recruiter
+ * @route GET /api/common/intent/timeline/:ritmId
+ */
+export const getIntentTimeline = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    const { ritmId } = req.params;
+
+    if (!ritmId) {
+      return sendResponse(res, 'error', null, 'Intent mapping ID is required', statusType.BAD_REQUEST);
+    }
+
+    // Get the intent mapping with related data
+    const mapping = await prisma.r_intent_talent_mapper.findFirst({
+      where: {
+        ritm_id: parseInt(ritmId),
+        status: true
+      },
+      include: {
+        r_intent: {
+          include: {
+            user: {
+              select: {
+                user_id: true,
+                user_full_name: true,
+                user_email: true
+              }
+            }
+          }
+        },
+        t_profile: {
+          include: {
+            user: {
+              select: {
+                user_id: true,
+                user_full_name: true,
+                user_email: true
+              }
+            }
+          }
+        },
+        r_intent_timeline: {
+          orderBy: { created_at: 'asc' },
+          where: { status: true }
+        }
+      }
+    });
+
+    if (!mapping) {
+      return sendResponse(res, 'error', null, 'Intent mapping not found', statusType.NOT_FOUND);
+    }
+
+    // Check if user has access to this intent (either talent or recruiter)
+    const isTalent = mapping.t_profile.user.user_id === userId;
+    const isRecruiter = mapping.r_intent.user.user_id === userId;
+
+    if (!isTalent && !isRecruiter) {
+      return sendResponse(res, 'error', null, 'Access denied', statusType.FORBIDDEN);
+    }
+
+    const responseData = {
+      ritm_id: mapping.ritm_id,
+      current_status: mapping.ritm_intent_status,
+      intent_summary: {
+        job_title: mapping.r_intent.ri_job_title,
+        employment_type: mapping.r_intent.ri_employment_type,
+        work_mode: mapping.r_intent.ri_work_mode,
+        location: mapping.r_intent.ri_location,
+        compensation: `${mapping.r_intent.ri_compensation_range} ${mapping.r_intent.ri_currency}`,
+        experience_level: mapping.r_intent.ri_experience_level
+      },
+      recruiter: {
+        user_id: mapping.r_intent.user.user_id,
+        name: mapping.r_intent.user.user_full_name,
+        email: mapping.r_intent.user.user_email
+      },
+      talent: {
+        user_id: mapping.t_profile.user.user_id,
+        name: mapping.t_profile.user.user_full_name,
+        email: mapping.t_profile.user.user_email
+      },
+      timeline: mapping.r_intent_timeline.map(t => ({
+        rit_id: t.rit_id,
+        status: t.rit_status,
+        notes: t.rit_notes,
+        created_at: t.created_at,
+        created_by: t.created_by
+      }))
+    };
+
+    return sendResponse(res, 'success', responseData, 'Timeline retrieved successfully', statusType.OK);
+
+  } catch (error) {
+    console.error('Error getting intent timeline:', error);
+    return sendResponse(res, 'error', { error: error.message }, 'Error getting intent timeline', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
 export default {
   getAllNotifications,
   getSingleNotification,
   markAsRead,
   markAllAsRead,
   getUnreadCount,
+  getIntentTimeline,
 };

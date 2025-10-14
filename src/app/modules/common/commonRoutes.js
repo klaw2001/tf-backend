@@ -9,5 +9,8 @@ router.get('/notifications/:notificationId', commonController.getSingleNotificat
 router.patch('/notifications/:notificationId/read', commonController.markAsRead);
 router.patch('/notifications/read-all', commonController.markAllAsRead);
 
+// Intent timeline route (accessible to both talent and recruiter)
+router.get('/intent/timeline/:ritmId', commonController.getIntentTimeline);
+
 export default router;
 

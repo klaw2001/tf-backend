@@ -9,6 +9,7 @@ import recruiterRoutes from './app/modules/recruiter/recruiterRoutes.js';
 import adminRoutes from './app/modules/admin/adminRoutes.js';
 import commonRoutes from './app/modules/common/commonRoutes.js';
 import chatRoutes from './app/modules/chat/chatRoutes.js';
+import meetingRoutes from './app/modules/meeting/meetingRoutes.js';
 import datamanipRoutes from './app/modules/datamanip/datamanip.js';
 import talentMiddleware from './middleware/talentMiddleware.js';
 import recruiterMiddleware from './middleware/recruiterMiddleware.js';
@@ -33,6 +34,7 @@ router.use('/recruiter', recruiterMiddleware, recruiterRoutes);
 router.use('/admin', adminMiddleware, adminRoutes);
 router.use('/common', commonMiddleware, commonRoutes);
 router.use('/chat', commonMiddleware, chatRoutes);
+router.use('/meeting', commonMiddleware, meetingRoutes);
 router.use('/danger',datamanipRoutes);
 
 // TODO: Add more routes as needed

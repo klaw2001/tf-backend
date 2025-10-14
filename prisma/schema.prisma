@@ -36,6 +36,8 @@ model user {
   r_service_purchase_mapper r_service_purchase_mapper[]
   r_favourite_talents r_favourite_talents[]
   notification notification[]
+  hosted_meetings meeting[]
+  meeting_participations meeting_participant[]
 }
 
 model role {
@@ -457,6 +459,7 @@ model chat_conversation {
   
   r_intent_talent_mapper r_intent_talent_mapper @relation(fields: [ritm_id], references: [ritm_id])
   chat_messages          chat_message[]
+  meetings               meeting[]
   
   @@index([recruiter_user_id])
   @@index([talent_user_id])
@@ -469,6 +472,8 @@ model chat_message {
   cm_message      String   @db.Text
   cm_message_type cm_message_types @default(Text)
   cm_file_url     String?  @db.VarChar(255)
+  cm_is_delivered Boolean  @default(false)
+  cm_delivered_at DateTime?
   cm_is_read      Boolean  @default(false)
   cm_read_at      DateTime?
   status          Boolean  @default(true)
@@ -485,4 +490,88 @@ enum cm_message_types {
   Text
   File
   Image
+}
+
+// Video Meeting Models
+model meeting {
+  meeting_id           Int       @id @default(autoincrement())
+  meeting_room_name    String    @unique @db.VarChar(255)  // Jitsi room name
+  meeting_title        String    @db.VarChar(255)
+  meeting_description  String?   @db.Text
+  cc_id                Int?      // Optional link to chat conversation
+  host_user_id         Int       // User who created the meeting
+  meeting_status       meeting_status_types @default(Scheduled)
+  meeting_scheduled_at DateTime?
+  meeting_started_at   DateTime?
+  meeting_ended_at     DateTime?
+  meeting_duration     Int?      // Duration in seconds
+  meeting_password     String?   @db.VarChar(255)  // Optional room password
+  is_recording_enabled Boolean   @default(false)
+  recording_url        String?   @db.VarChar(500)
+  status               Boolean   @default(true)
+  created_at           DateTime  @default(now())
+  updated_at           DateTime  @updatedAt
+  
+  chat_conversation      chat_conversation? @relation(fields: [cc_id], references: [cc_id])
+  host_user             user @relation(fields: [host_user_id], references: [user_id])
+  meeting_participants  meeting_participant[]
+  meeting_recordings    meeting_recording[]
+  
+  @@index([host_user_id])
+  @@index([cc_id])
+  @@index([meeting_status])
+}
+
+model meeting_participant {
+  mp_id          Int      @id @default(autoincrement())
+  meeting_id     Int
+  user_id        Int
+  mp_role        mp_role_types @default(Participant)  // Host, Moderator, Participant
+  mp_joined_at   DateTime?
+  mp_left_at     DateTime?
+  mp_duration    Int?     // Participation duration in seconds
+  mp_is_muted    Boolean  @default(false)
+  mp_is_video_on Boolean  @default(true)
+  status         Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  
+  meeting meeting @relation(fields: [meeting_id], references: [meeting_id], onDelete: Cascade)
+  user    user    @relation(fields: [user_id], references: [user_id])
+  
+  @@unique([meeting_id, user_id])
+  @@index([meeting_id])
+  @@index([user_id])
+}
+
+model meeting_recording {
+  mr_id          Int      @id @default(autoincrement())
+  meeting_id     Int
+  mr_file_name   String   @db.VarChar(255)
+  mr_file_url    String   @db.VarChar(500)
+  mr_file_size   BigInt?  // Size in bytes
+  mr_duration    Int?     // Duration in seconds
+  mr_format      String?  @db.VarChar(50)  // mp4, webm, etc.
+  mr_started_at  DateTime
+  mr_ended_at    DateTime?
+  status         Boolean  @default(true)
+  created_at     DateTime @default(now())
+  updated_at     DateTime @updatedAt
+  
+  meeting meeting @relation(fields: [meeting_id], references: [meeting_id], onDelete: Cascade)
+  
+  @@index([meeting_id])
+}
+
+enum meeting_status_types {
+  Scheduled
+  InProgress
+  Completed
+  Cancelled
+}
+
+enum mp_role_types {
+  Host
+  Moderator
+  Participant
 }
