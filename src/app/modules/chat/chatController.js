@@ -379,10 +379,96 @@ export const getUnreadCount = async (req, res) => {
   }
 };
 
+/**
+ * Get all meetings for a conversation
+ * @route GET /api/chat/conversation/:conversationId/meetings
+ */
+export const getChatMeetings = async (req, res) => {
+  try {
+    const { conversationId } = req.params;
+    const userId = req.user.user_id;
+
+    // Verify user has access to this conversation
+    const conversation = await prisma.chat_conversation.findFirst({
+      where: {
+        cc_id: parseInt(conversationId),
+        OR: [
+          { recruiter_user_id: userId },
+          { talent_user_id: userId }
+        ],
+        status: true
+      }
+    });
+
+    if (!conversation) {
+      return sendResponse(res, 'error', null, 'Conversation not found', statusType.NOT_FOUND);
+    }
+
+    // Get all meetings for this conversation
+    const meetings = await prisma.meeting.findMany({
+      where: {
+        cc_id: parseInt(conversationId),
+        status: true
+      },
+      include: {
+        host_user: {
+          select: {
+            user_id: true,
+            user_full_name: true,
+            user_email: true,
+          }
+        },
+        meeting_participants: {
+          include: {
+            user: {
+              select: {
+                user_id: true,
+                user_full_name: true,
+                user_email: true,
+              }
+            }
+          }
+        },
+        meeting_recordings: {
+          select: {
+            mr_id: true,
+            mr_file_name: true,
+            mr_file_url: true,
+            mr_duration: true,
+            mr_format: true,
+            created_at: true,
+          }
+        }
+      },
+      orderBy: {
+        created_at: 'desc'
+      }
+    });
+
+    return sendResponse(
+      res,
+      'success',
+      { meetings, total: meetings.length },
+      'Meetings fetched successfully',
+      statusType.OK
+    );
+  } catch (error) {
+    console.error('Error fetching chat meetings:', error);
+    return sendResponse(
+      res,
+      'error',
+      null,
+      'Failed to fetch meetings',
+      statusType.INTERNAL_SERVER_ERROR
+    );
+  }
+};
+
 export default {
   getConversations,
   getSingleConversation,
   getMessages,
-  getUnreadCount
+  getUnreadCount,
+  getChatMeetings
 };
 

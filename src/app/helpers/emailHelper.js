@@ -6,14 +6,90 @@ import { brevoCreds } from '../../config/index.js';
  */
 const createEmailTransporter = () => {
   return nodemailer.createTransport({
-    host: brevoCreds.host,
-    port: brevoCreds.port,
-    secure: false, // Use TLS
+    host: process.env.HOST,
+    port: process.env.MAIL_PORT,
+    secure: false, // false for STARTTLS, true for direct SSL/TLS
+    requireTLS: true, // Require TLS connection
     auth: {
-      user: brevoCreds.user,
-      pass: brevoCreds.password,
+      user: process.env.MAIL_USER,
+      pass: process.env.PASSWORD,
     },
   });
+};
+
+/**
+ * Generate common email HTML template
+ * @param {String} heading - Email heading
+ * @param {String} recipientName - Recipient name
+ * @param {String} content - Main content (HTML)
+ * @returns {String} Complete HTML template
+ */
+const generateEmailTemplate = (heading, recipientName, content) => {
+  return `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
+        .container { max-width: 600px; margin: 0 auto; padding: 20px; }
+        .header { background-color: #4F46E5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
+        .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
+        .button { display: inline-block; background-color: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
+        .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="header">
+          <h1>${heading}</h1>
+        </div>
+        <div class="content">
+          <p>Hi ${recipientName},</p>
+          ${content}
+        </div>
+        <div class="footer">
+          <p>© ${new Date().getFullYear()} TalentFlip. All rights reserved.</p>
+        </div>
+      </div>
+    </body>
+    </html>
+  `;
+};
+
+/**
+ * Create mail options object
+ * @param {String} from - Sender email
+ * @param {String} to - Recipient email
+ * @param {String} subject - Email subject
+ * @param {String} html - HTML content
+ * @param {String} text - Plain text content
+ * @returns {Object} Mail options
+ */
+const createMailOptions = (from, to, subject, html, text) => {
+  return {
+    from,
+    to,
+    subject,
+    html,
+    text,
+  };
+};
+
+/**
+ * Send email using transporter
+ * @param {Object} mailOptions - Email options (from, to, subject, html, text)
+ * @returns {Promise<Object>} Email send result
+ */
+const sendEmail = async (mailOptions) => {
+  try {
+    const transporter = createEmailTransporter();
+    const result = await transporter.sendMail(mailOptions);
+    console.log(`✅ Email sent to ${mailOptions.to}:`, result.messageId);
+    return result;
+  } catch (error) {
+    console.error('Error sending email:', error);
+    throw error;
+  }
 };
 
 /**
@@ -26,72 +102,48 @@ const createEmailTransporter = () => {
  */
 export const sendChatMessageEmail = async (recipientUser, senderName, message, conversationId) => {
   try {
-    const transporter = createEmailTransporter();
+    const heading = '💬 New Message on TalentFlip';
+    const content = `
+      <p>You have a new message from <strong>${senderName}</strong>:</p>
+      
+      <div style="background-color: white; padding: 20px; border-left: 4px solid #4F46E5; margin: 20px 0; border-radius: 4px;">
+        <p style="margin: 0;">${message}</p>
+      </div>
+      
+      <p>
+        <a href="${process.env.FRONTEND_URL || 'http://localhost:4000'}/chat/${conversationId}" class="button">
+          View Message
+        </a>
+      </p>
+      
+      <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
+        You're receiving this email because you have an active conversation on TalentFlip.
+      </p>
+    `;
 
-    const mailOptions = {
-      from: `"TalentFlip Chat" <noreply@talentflip.ai>`,
-      to: recipientUser.user_email,
-      subject: `New message from ${senderName}`,
-      html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #4F46E5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-            .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
-            .message-box { background-color: white; padding: 20px; border-left: 4px solid #4F46E5; margin: 20px 0; border-radius: 4px; }
-            .button { display: inline-block; background-color: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
-            .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>💬 New Message on TalentFlip</h1>
-            </div>
-            <div class="content">
-              <p>Hi ${recipientUser.user_full_name},</p>
-              <p>You have a new message from <strong>${senderName}</strong>:</p>
-              
-              <div class="message-box">
-                <p style="margin: 0;">${message}</p>
-              </div>
-              
-              <p>
-                <a href="${process.env.FRONTEND_URL || 'http://localhost:4000'}/chat/${conversationId}" class="button">
-                  View Message
-                </a>
-              </p>
-              
-              <p style="margin-top: 30px; color: #6b7280; font-size: 14px;">
-                You're receiving this email because you have an active conversation on TalentFlip.
-              </p>
-            </div>
-            <div class="footer">
-              <p>© ${new Date().getFullYear()} TalentFlip. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
-      text: `
-        Hi ${recipientUser.user_full_name},
-        
-        You have a new message from ${senderName}:
-        
-        "${message}"
-        
-        View your message at: ${process.env.FRONTEND_URL || 'http://localhost:4000'}/chat/${conversationId}
-        
-        © ${new Date().getFullYear()} TalentFlip
-      `
-    };
+    const html = generateEmailTemplate(heading, recipientUser.user_full_name, content);
+    
+    const text = `
+      Hi ${recipientUser.user_full_name},
+      
+      You have a new message from ${senderName}:
+      
+      "${message}"
+      
+      View your message at: ${process.env.FRONTEND_URL || 'http://localhost:4000'}/chat/${conversationId}
+      
+      © ${new Date().getFullYear()} TalentFlip
+    `;
 
-    const result = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent to ${recipientUser.user_email}:`, result.messageId);
-    return result;
+    const mailOptions = createMailOptions(
+      `"TalentFlip Chat" <noreply@talentflip.ai>`,
+      recipientUser.user_email,
+      `New message from ${senderName}`,
+      html,
+      text
+    );
+
+    return await sendEmail(mailOptions);
   } catch (error) {
     console.error('Error sending chat message email:', error);
     throw error;
@@ -111,60 +163,36 @@ export const sendChatMessageEmail = async (recipientUser, senderName, message, c
  */
 export const sendNotificationEmail = async (recipientEmail, recipientName, subject, heading, content, buttonText = null, buttonUrl = null) => {
   try {
-    const transporter = createEmailTransporter();
-
     const buttonHtml = buttonText && buttonUrl 
       ? `<p><a href="${buttonUrl}" class="button">${buttonText}</a></p>` 
       : '';
 
-    const mailOptions = {
-      from: `"TalentFlip" <noreply@talentflip.ai>`,
-      to: recipientEmail,
-      subject: subject,
-      html: `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <style>
-            body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-            .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-            .header { background-color: #4F46E5; color: white; padding: 20px; text-align: center; border-radius: 8px 8px 0 0; }
-            .content { background-color: #f9fafb; padding: 30px; border-radius: 0 0 8px 8px; }
-            .button { display: inline-block; background-color: #4F46E5; color: white; padding: 12px 30px; text-decoration: none; border-radius: 6px; margin-top: 20px; }
-            .footer { text-align: center; margin-top: 30px; color: #6b7280; font-size: 14px; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <div class="header">
-              <h1>${heading}</h1>
-            </div>
-            <div class="content">
-              <p>Hi ${recipientName},</p>
-              ${content}
-              ${buttonHtml}
-            </div>
-            <div class="footer">
-              <p>© ${new Date().getFullYear()} TalentFlip. All rights reserved.</p>
-            </div>
-          </div>
-        </body>
-        </html>
-      `,
-      text: `
-        Hi ${recipientName},
-        
-        ${content.replace(/<[^>]*>/g, '')}
-        
-        ${buttonUrl ? `Visit: ${buttonUrl}` : ''}
-        
-        © ${new Date().getFullYear()} TalentFlip
-      `
-    };
+    const fullContent = `
+      ${content}
+      ${buttonHtml}
+    `;
 
-    const result = await transporter.sendMail(mailOptions);
-    console.log(`✅ Email sent to ${recipientEmail}:`, result.messageId);
-    return result;
+    const html = generateEmailTemplate(heading, recipientName, fullContent);
+    
+    const text = `
+      Hi ${recipientName},
+      
+      ${content.replace(/<[^>]*>/g, '')}
+      
+      ${buttonUrl ? `Visit: ${buttonUrl}` : ''}
+      
+      © ${new Date().getFullYear()} TalentFlip
+    `;
+
+    const mailOptions = createMailOptions(
+      `"TalentFlip" <noreply@talentflip.ai>`,
+      recipientEmail,
+      subject,
+      html,
+      text
+    );
+
+    return await sendEmail(mailOptions);
   } catch (error) {
     console.error('Error sending notification email:', error);
     throw error;
@@ -175,4 +203,3 @@ export default {
   sendChatMessageEmail,
   sendNotificationEmail,
 };
-

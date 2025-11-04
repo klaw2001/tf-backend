@@ -1940,7 +1940,12 @@ export const sendIntentToTalents = async (req, res) => {
       },
       select: { 
         tp_id: true,
-        user_id: true
+        user_id: true,
+        user: {
+          select: {
+            user_full_name: true
+          }
+        }
       }
     });
 
@@ -1965,12 +1970,15 @@ export const sendIntentToTalents = async (req, res) => {
       return sendResponse(res, 'error', null, 'All selected talents have already received this intent', statusType.BAD_REQUEST);
     }
 
-    // Create new mappings and timeline records in a transaction
+    // Create new mappings, timeline records, and chat conversations in a transaction
     const result = await prisma.$transaction(async (tx) => {
       const createdMappers = [];
+      const createdConversations = [];
       
-      // Create each mapping individually to get the ritm_id for timeline creation
+      // Create each mapping individually to get the ritm_id for timeline and chat creation
       for (const talentId of newTalentIds) {
+        const talent = talents.find(t => t.tp_id === parseInt(talentId));
+        
         const mapper = await tx.r_intent_talent_mapper.create({
           data: {
             ri_id: parseInt(intentId),
@@ -1990,10 +1998,24 @@ export const sendIntentToTalents = async (req, res) => {
           }
         });
         
+        // Create chat conversation immediately when intent is submitted
+        const conversation = await tx.chat_conversation.create({
+          data: {
+            ritm_id: mapper.ritm_id,
+            recruiter_user_id: userId,
+            talent_user_id: talent.user_id,
+          }
+        });
+        
         createdMappers.push(mapper);
+        createdConversations.push({
+          conversation,
+          talentUserId: talent.user_id,
+          talentName: talent.user.user_full_name
+        });
       }
       
-      return createdMappers;
+      return { createdMappers, createdConversations };
     });
 
     // Create notifications for talents
@@ -2015,12 +2037,46 @@ export const sendIntentToTalents = async (req, res) => {
       // Don't fail the request if notification fails
     }
 
+    // Emit socket events for chat creation
+    try {
+      const { getIO } = await import('../../../socket/socketServer.js');
+      const io = getIO();
+      
+      for (const convData of result.createdConversations) {
+        const { conversation, talentUserId, talentName } = convData;
+        
+        // Notify recruiter about chat creation
+        io.to(`user:${userId}`).emit('chat_created', {
+          conversationId: conversation.cc_id,
+          withUser: {
+            user_id: talentUserId,
+            user_full_name: talentName
+          },
+          jobTitle: intent.ri_job_title
+        });
+        
+        // Notify talent about chat creation
+        io.to(`user:${talentUserId}`).emit('chat_created', {
+          conversationId: conversation.cc_id,
+          withUser: {
+            user_id: userId,
+            user_full_name: intent.user.user_full_name
+          },
+          jobTitle: intent.ri_job_title
+        });
+      }
+    } catch (socketError) {
+      console.error('Error emitting socket events:', socketError);
+      // Don't fail the request if socket emission fails
+    }
+
     const responseData = {
       intent_id: parseInt(intentId),
       total_requested: talentIds.length,
       already_sent: existingTalentIds.length,
       newly_sent: newTalentIds.length,
-      created_mappings: result.length,
+      created_mappings: result.createdMappers.length,
+      created_conversations: result.createdConversations.length,
       talent_ids_sent: newTalentIds
     };
 

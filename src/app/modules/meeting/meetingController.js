@@ -5,6 +5,7 @@ import { generateJitsiToken, generateRoomName, calculateDuration } from './meeti
 import { JITSI_CONFIG } from '../../../config/index.js';
 import { createNotification } from '../../helpers/notificationHelper.js';
 import { getIO } from '../../../socket/socketServer.js';
+import { sendNotificationEmail } from '../../helpers/emailHelper.js';
 
 const prisma = new PrismaClient();
 
@@ -25,6 +26,57 @@ export const createMeeting = async (req, res) => {
     } = req.body;
 
     const hostUserId = req.user.user_id;
+
+    // Prepare final list of participant user IDs
+    let finalParticipantUserIds = [];
+
+    // If conversationId is provided, automatically add the other participant from the conversation
+    if (conversationId) {
+      try {
+        const conversation = await prisma.chat_conversation.findUnique({
+          where: { cc_id: parseInt(conversationId) },
+          select: {
+            recruiter_user_id: true,
+            talent_user_id: true,
+          },
+        });
+
+        if (conversation) {
+          // Determine the other participant (not the host)
+          let otherParticipantId = null;
+          if (hostUserId === conversation.recruiter_user_id) {
+            // Host is recruiter, so the other participant is the talent
+            otherParticipantId = conversation.talent_user_id;
+          } else if (hostUserId === conversation.talent_user_id) {
+            // Host is talent, so the other participant is the recruiter
+            otherParticipantId = conversation.recruiter_user_id;
+          }
+
+          // Add the other participant to the list if found
+          if (otherParticipantId && otherParticipantId !== hostUserId) {
+            finalParticipantUserIds.push(otherParticipantId);
+            console.log(`✅ Auto-added other participant (${otherParticipantId}) from conversation ${conversationId}`);
+          }
+        }
+      } catch (convError) {
+        console.error('Error fetching conversation:', convError);
+        // Continue even if conversation fetch fails
+      }
+    }
+
+    // Add manually provided participant user IDs (avoid duplicates)
+    if (participantUserIds && Array.isArray(participantUserIds) && participantUserIds.length > 0) {
+      const validUserIds = participantUserIds
+        .map(id => parseInt(id))
+        .filter(id => !isNaN(id) && id > 0 && id !== hostUserId); // Exclude host
+
+      // Add to final list, avoiding duplicates
+      validUserIds.forEach(userId => {
+        if (!finalParticipantUserIds.includes(userId)) {
+          finalParticipantUserIds.push(userId);
+        }
+      });
+    }
 
     // Generate unique room name
     const roomName = generateRoomName();
@@ -55,13 +107,13 @@ export const createMeeting = async (req, res) => {
       });
 
       // Add other participants
-      if (participantUserIds && Array.isArray(participantUserIds)) {
+      if (finalParticipantUserIds.length > 0) {
         await Promise.all(
-          participantUserIds.map((userId) =>
+          finalParticipantUserIds.map((userId) =>
             tx.meeting_participant.create({
               data: {
                 meeting_id: newMeeting.meeting_id,
-                user_id: parseInt(userId),
+                user_id: userId,
                 mp_role: 'Participant',
               },
             })
@@ -69,31 +121,94 @@ export const createMeeting = async (req, res) => {
         );
       }
 
+      // Create chat message for meeting history if linked to conversation
+      if (conversationId) {
+        await tx.chat_message.create({
+          data: {
+            cc_id: parseInt(conversationId),
+            sender_user_id: hostUserId,
+            cm_message: `Meeting scheduled: ${title}`,
+            cm_message_type: 'Meeting',
+            cm_file_url: `/meeting/${newMeeting.meeting_id}`,
+            cm_is_delivered: true,
+            cm_delivered_at: new Date(),
+          }
+        });
+
+        // Update conversation last message
+        await tx.chat_conversation.update({
+          where: { cc_id: parseInt(conversationId) },
+          data: {
+            cc_last_message: `📅 Meeting: ${title}`,
+            cc_last_message_at: new Date(),
+          }
+        });
+      }
+
       return newMeeting;
     });
 
-    // Send notifications to participants
-    if (participantUserIds && Array.isArray(participantUserIds)) {
+    // Send notifications to all participants (including auto-added ones)
+    if (finalParticipantUserIds.length > 0) {
       const io = getIO();
       
-      for (const userId of participantUserIds) {
+      for (const userId of finalParticipantUserIds) {
         try {
-          // Create in-app notification
-          await createNotification(
-            parseInt(userId),
-            'meeting_invitation',
-            `Meeting invitation from ${req.user.user_full_name}`,
-            `You've been invited to: ${title}`,
-            null
-          );
-
-          // Send socket notification
-          io.to(`user:${userId}`).emit('meeting_invitation', {
-            meetingId: meeting.meeting_id,
-            hostName: req.user.user_full_name,
-            title,
-            scheduledAt,
+          // Get participant details for email
+          const participant = await prisma.user.findUnique({
+            where: { user_id: parseInt(userId) },
+            select: {
+              user_full_name: true,
+              user_email: true,
+            }
           });
+
+          if (participant) {
+            // Create in-app notification
+            await createNotification(
+              parseInt(userId),
+              'meeting_invitation',
+              `Meeting invitation from ${req.user.user_full_name}`,
+              `You've been invited to: ${title}`,
+              null
+            );
+
+            // Send socket notification
+            io.to(`user:${userId}`).emit('meeting_invitation', {
+              meetingId: meeting.meeting_id,
+              hostName: req.user.user_full_name,
+              title,
+              scheduledAt,
+            });
+
+            // Send email notification
+            const meetingUrl = `${process.env.FRONTEND_URL || 'http://localhost:4000'}/meeting/${meeting.meeting_id}`;
+            const scheduledTime = scheduledAt 
+              ? `<p><strong>Scheduled for:</strong> ${new Date(scheduledAt).toLocaleString('en-US', { dateStyle: 'full', timeStyle: 'short' })}</p>`
+              : '<p><strong>Type:</strong> Instant Meeting - Join Now!</p>';
+
+            await sendNotificationEmail(
+              participant.user_email,
+              participant.user_full_name,
+              `Meeting Invitation: ${title}`,
+              '📅 You have been invited to a meeting',
+              `
+                <p><strong>${req.user.user_full_name}</strong> has invited you to a meeting:</p>
+                
+                <div style="background-color: white; padding: 20px; border-left: 4px solid #4F46E5; margin: 20px 0; border-radius: 4px;">
+                  <h3 style="margin-top: 0; color: #4F46E5;">${title}</h3>
+                  ${description ? `<p style="color: #6b7280;">${description}</p>` : ''}
+                  ${scheduledTime}
+                </div>
+                
+                <p>Click the button below to view meeting details and join when ready:</p>
+              `,
+              'View Meeting Details',
+              meetingUrl
+            );
+
+            console.log(`✅ Meeting invitation sent to ${participant.user_email}`);
+          }
         } catch (notifError) {
           console.error(`Error sending notification to user ${userId}:`, notifError);
         }

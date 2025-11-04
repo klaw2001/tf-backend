@@ -12,6 +12,9 @@ router.get('/conversations/:conversationId', chatController.getSingleConversatio
 // Get messages for a conversation
 router.get('/conversations/:conversationId/messages', chatController.getMessages);
 
+// Get meetings for a conversation
+router.get('/conversation/:conversationId/meetings', chatController.getChatMeetings);
+
 // Get total unread count
 router.get('/unread-count', chatController.getUnreadCount);
 

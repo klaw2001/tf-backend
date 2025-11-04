@@ -490,6 +490,7 @@ enum cm_message_types {
   Text
   File
   Image
+  Meeting
 }
 
 // Video Meeting Models

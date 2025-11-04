@@ -2021,47 +2021,8 @@ export const acceptIntent = async (req, res) => {
       // Don't fail the request if notification fails
     }
 
-    // Create chat conversation when intent is accepted
-    try {
-      const conversation = await prisma.chat_conversation.create({
-        data: {
-          ritm_id: parseInt(ritmId),
-          recruiter_user_id: mapping.r_intent.user_id,
-          talent_user_id: userId,
-        }
-      });
-
-      // Emit socket event to both users
-      try {
-        const { getIO } = await import('../../../socket/socketServer.js');
-        const io = getIO();
-        
-        io.to(`user:${mapping.r_intent.user_id}`).emit('chat_created', {
-          conversationId: conversation.cc_id,
-          withUser: {
-            user_id: userId,
-            user_full_name: mapping.t_profile.user.user_full_name
-          },
-          jobTitle: mapping.r_intent.ri_job_title
-        });
-
-        io.to(`user:${userId}`).emit('chat_created', {
-          conversationId: conversation.cc_id,
-          withUser: {
-            user_id: mapping.r_intent.user_id,
-            user_full_name: mapping.r_intent.user.user_full_name
-          },
-          jobTitle: mapping.r_intent.ri_job_title
-        });
-      } catch (socketError) {
-        console.error('Error emitting socket event:', socketError);
-        // Don't fail if socket emission fails
-      }
-      
-    } catch (chatError) {
-      console.error('Error creating chat conversation:', chatError);
-      // Don't fail the request if chat creation fails
-    }
+    // Note: Chat conversation is already created when intent was submitted by recruiter
+    // No need to create it again here
 
     return sendResponse(res, 'success', result, 'Intent accepted successfully', statusType.SUCCESS);
 

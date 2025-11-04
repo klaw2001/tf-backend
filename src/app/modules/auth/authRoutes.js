@@ -1,10 +1,15 @@
 import express from 'express';
-import { signup, signin } from './authController.js';
+import { signup, signupOld, signin, uploadResumeMiddleware } from './authController.js';
 
 
 const router = express.Router();
 
-router.post('/signup', signup);
+// New signup with resume upload (for talents)
+router.post('/signup', uploadResumeMiddleware, signup);
+
+// Old signup with manual entry (for recruiters or fallback)
+router.post('/signup-old', signupOld);
+
 router.post('/signin', signin);
 
 export default router;
