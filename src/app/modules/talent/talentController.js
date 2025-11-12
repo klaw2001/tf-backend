@@ -1874,7 +1874,9 @@ export const getReceivedIntents = async (req, res) => {
           personalised_message: intent.ri_personalised_message,
           next_step: intent.ri_next_step,
           preferred_timeline: intent.ri_preferred_timeline,
-          response_deadline: intent.ri_response_deadline
+          response_deadline: intent.ri_response_deadline,
+          intent_type: intent.ri_intent_type,
+          agreement_content: intent.ri_agreement_content
         },
         recruiter: {
           name: intent.user.user_full_name,
@@ -1882,6 +1884,12 @@ export const getReceivedIntents = async (req, res) => {
           profile_image: recruiter?.rp_profile_image,
           company_name: recruiter?.r_company_profile?.rc_name,
           company_website: recruiter?.r_company_profile?.rc_website
+        },
+        agreement: {
+          required: intent.ri_intent_type === 'WithAgreement',
+          snapshot: mapping.ritm_agreement_snapshot,
+          accepted_at: mapping.ritm_agreement_accepted_at,
+          accepted_by: mapping.ritm_agreement_accepted_by
         },
         timeline: mapping.r_intent_timeline.map(t => ({
           status: t.rit_status,
@@ -1924,7 +1932,7 @@ export const acceptIntent = async (req, res) => {
     }
 
     const { ritmId } = req.params;
-    const { notes } = req.body;
+    const { notes, agreementAccepted } = req.body;
 
     if (!ritmId) {
       return sendResponse(res, 'error', null, 'Intent mapping ID is required', statusType.BAD_REQUEST);
@@ -1950,6 +1958,8 @@ export const acceptIntent = async (req, res) => {
         r_intent: {
           select: {
             ri_job_title: true,
+            ri_intent_type: true,
+            ri_agreement_content: true,
             user_id: true,
             user: {
               select: {
@@ -1983,28 +1993,61 @@ export const acceptIntent = async (req, res) => {
       return sendResponse(res, 'error', null, 'Cannot accept a rejected intent', statusType.BAD_REQUEST);
     }
 
-    // Update mapping and create timeline record in a transaction
+    const requiresAgreement = mapping.r_intent.ri_intent_type === 'WithAgreement';
+
+    if (requiresAgreement && (!mapping.ritm_agreement_snapshot || mapping.ritm_agreement_snapshot.trim().length === 0)) {
+      return sendResponse(res, 'error', null, 'Agreement terms are unavailable for this intent. Please contact the recruiter.', statusType.BAD_REQUEST);
+    }
+
+    const normalizedAgreementAccepted = typeof agreementAccepted === 'string'
+      ? agreementAccepted.toLowerCase() === 'true'
+      : agreementAccepted === true;
+
+    if (requiresAgreement && !normalizedAgreementAccepted) {
+      return sendResponse(res, 'error', null, 'You must accept the agreement terms to proceed', statusType.BAD_REQUEST);
+    }
+
+    const agreementAcceptedAt = requiresAgreement ? new Date() : null;
+
+    // Update mapping and create timeline records in a transaction
     const result = await prisma.$transaction(async (tx) => {
       // Update mapping status
       const updatedMapping = await tx.r_intent_talent_mapper.update({
         where: { ritm_id: parseInt(ritmId) },
         data: {
           ritm_intent_status: 'Intent_Accepted',
+          ritm_agreement_accepted_at: requiresAgreement ? agreementAcceptedAt : null,
+          ritm_agreement_accepted_by: requiresAgreement ? userId : null,
           updated_by: userId.toString()
         }
       });
 
-      // Create timeline record
-      const timelineRecord = await tx.r_intent_timeline.create({
+      const timelineRecords = [];
+
+      if (requiresAgreement) {
+        const agreementTimeline = await tx.r_intent_timeline.create({
+          data: {
+            ritm_id: parseInt(ritmId),
+            rit_status: 'Intent_Agreement_Accepted',
+            rit_notes: 'Agreement accepted by talent',
+            created_by: userId.toString()
+          }
+        });
+        timelineRecords.push(agreementTimeline);
+      }
+
+      const acceptanceTimeline = await tx.r_intent_timeline.create({
         data: {
           ritm_id: parseInt(ritmId),
           rit_status: 'Intent_Accepted',
-          rit_notes: notes || 'Intent accepted by talent',
+          rit_notes: notes || (requiresAgreement ? 'Intent and agreement accepted by talent' : 'Intent accepted by talent'),
           created_by: userId.toString()
         }
       });
 
-      return { updatedMapping, timelineRecord };
+      timelineRecords.push(acceptanceTimeline);
+
+      return { updatedMapping, timelineRecords };
     });
 
     // Create notification for recruiter

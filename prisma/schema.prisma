@@ -267,6 +267,8 @@ model r_intent {
   ri_next_step             ri_next_step_types
   ri_preferred_timeline    String?  @db.VarChar(255)
   ri_response_deadline     DateTime?
+  ri_intent_type           ri_intent_type_types @default(Normal)
+  ri_agreement_content     String?  @db.Text
   status                   Boolean  @default(true)
   created_at               DateTime @default(now())
   updated_at               DateTime @updatedAt
@@ -282,6 +284,9 @@ model r_intent_talent_mapper {
   ri_id        Int      // intent id
   tp_id        Int      // talent profile id
   ritm_intent_status rit_status_types? @default(Intent_Submitted) // current intent status
+  ritm_agreement_snapshot String? @db.Text
+  ritm_agreement_accepted_at DateTime?
+  ritm_agreement_accepted_by Int?
   status       Boolean  @default(true)
   created_at   DateTime @default(now())
   updated_at   DateTime @updatedAt
@@ -329,8 +334,14 @@ enum ri_next_step_types {
   Intro_Chat
 }
 
+enum ri_intent_type_types {
+  Normal
+  WithAgreement
+}
+
 enum rit_status_types {
   Intent_Submitted
+  Intent_Agreement_Accepted
   Intent_Accepted
   Intent_Rejected
   Project_Started

@@ -306,7 +306,8 @@ export const getIntentTimeline = async (req, res) => {
         work_mode: mapping.r_intent.ri_work_mode,
         location: mapping.r_intent.ri_location,
         compensation: `${mapping.r_intent.ri_compensation_range} ${mapping.r_intent.ri_currency}`,
-        experience_level: mapping.r_intent.ri_experience_level
+        experience_level: mapping.r_intent.ri_experience_level,
+        intent_type: mapping.r_intent.ri_intent_type
       },
       recruiter: {
         user_id: mapping.r_intent.user.user_id,
@@ -317,6 +318,13 @@ export const getIntentTimeline = async (req, res) => {
         user_id: mapping.t_profile.user.user_id,
         name: mapping.t_profile.user.user_full_name,
         email: mapping.t_profile.user.user_email
+      },
+      agreement: {
+        content: mapping.r_intent.ri_agreement_content,
+        snapshot: mapping.ritm_agreement_snapshot,
+        accepted_at: mapping.ritm_agreement_accepted_at,
+        accepted_by: mapping.ritm_agreement_accepted_by,
+        required: mapping.r_intent.ri_intent_type === 'WithAgreement'
       },
       timeline: mapping.r_intent_timeline.map(t => ({
         rit_id: t.rit_id,

@@ -6,11 +6,15 @@ import { sendResponse } from '../../helpers/responseHelper.js';
 import statusType from '../../enums/statusTypes.js';
 import { PrismaClient } from '@prisma/client';
 import Stripe from 'stripe';
-import { STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, FRONTEND_URL } from '../../../config/index.js';
+import OpenAI from 'openai';
+import { STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, FRONTEND_URL, OPENAI_API_KEY } from '../../../config/index.js';
 import { createNotification } from '../../helpers/notificationHelper.js';
 
 const prisma = new PrismaClient();
 const stripe = new Stripe(STRIPE_SECRET_KEY);
+const openai = new OpenAI({
+  apiKey: OPENAI_API_KEY
+});
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -1577,7 +1581,9 @@ export const saveIntent = async (req, res) => {
       ri_personalised_message,
       ri_next_step,
       ri_preferred_timeline,
-      ri_response_deadline
+      ri_response_deadline,
+      ri_intent_type,
+      ri_agreement_content
     } = req.body;
 
     // Validate required fields
@@ -1585,6 +1591,23 @@ export const saveIntent = async (req, res) => {
         !ri_compensation_range || !ri_currency || !ri_skills_required || !ri_job_description ||
         !ri_personalised_message || !ri_next_step) {
       return sendResponse(res, 'error', null, 'All required fields must be provided', statusType.BAD_REQUEST);
+    }
+
+    const allowedIntentTypes = ['Normal', 'WithAgreement'];
+    const intentType = ri_intent_type || 'Normal';
+
+    if (!allowedIntentTypes.includes(intentType)) {
+      return sendResponse(res, 'error', null, 'Invalid intent type', statusType.BAD_REQUEST);
+    }
+
+    const agreementContent = intentType === 'WithAgreement'
+      ? (typeof ri_agreement_content === 'string' && ri_agreement_content.trim().length > 0
+        ? ri_agreement_content
+        : null)
+      : null;
+
+    if (intentType === 'WithAgreement' && !agreementContent) {
+      return sendResponse(res, 'error', null, 'Agreement content is required for intents with agreements', statusType.BAD_REQUEST);
     }
 
     // Validate location is required for hybrid/onsite
@@ -1637,6 +1660,8 @@ export const saveIntent = async (req, res) => {
           ri_next_step,
           ri_preferred_timeline,
           ri_response_deadline: ri_response_deadline ? new Date(ri_response_deadline) : null,
+          ri_intent_type: intentType,
+          ri_agreement_content: agreementContent,
           updated_by: userId.toString(),
           updated_at: new Date()
         }
@@ -1661,6 +1686,8 @@ export const saveIntent = async (req, res) => {
           ri_next_step,
           ri_preferred_timeline,
           ri_response_deadline: ri_response_deadline ? new Date(ri_response_deadline) : null,
+          ri_intent_type: intentType,
+          ri_agreement_content: agreementContent,
           created_by: userId.toString()
         }
       });
@@ -1673,6 +1700,95 @@ export const saveIntent = async (req, res) => {
   } catch (error) {
     console.error('Error saving intent:', error);
     return sendResponse(res, 'error', { error: error.message }, 'Error saving intent', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
+export const generateIntentAgreementDraft = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    if (!OPENAI_API_KEY) {
+      return sendResponse(res, 'error', null, 'Agreement drafting service is unavailable', statusType.SERVICE_UNAVAILABLE);
+    }
+
+    const {
+      projectOverview,
+      scope,
+      responsibilities,
+      deliverables,
+      paymentTerms,
+      additionalClauses,
+      tone = 'professional'
+    } = req.body;
+
+    if (!projectOverview || typeof projectOverview !== 'string' || projectOverview.trim().length === 0) {
+      return sendResponse(res, 'error', null, 'projectOverview is required', statusType.BAD_REQUEST);
+    }
+
+    const summaryLines = [
+      `Project Overview: ${projectOverview.trim()}`,
+      scope ? `Scope: ${scope}` : null,
+      responsibilities ? `Responsibilities: ${responsibilities}` : null,
+      deliverables ? `Deliverables: ${deliverables}` : null,
+      paymentTerms ? `Payment Terms: ${paymentTerms}` : null,
+      additionalClauses ? `Additional Clauses: ${additionalClauses}` : null
+    ].filter(Boolean).join('\n');
+
+    const toneDescriptor = tone === 'friendly' ? 'a friendly yet professional' : tone === 'formal' ? 'a highly formal' : 'a professional';
+
+    const systemPrompt = `You are a contract specialist helping recruiters draft clear, concise agreements for freelance or contract talent engagements.`;
+
+    const userPrompt = `
+Draft ${toneDescriptor} agreement for a recruiter to share with a talent. The agreement should be structured, easy to read, and include the following sections when relevant:
+- Project overview
+- Scope and responsibilities
+- Deliverables and milestones
+- Communication expectations
+- Payment terms
+- Confidentiality and IP ownership
+- Termination or modification clauses
+- Signature placeholders
+
+Adapt the content to the provided details. Use rich HTML paragraphs (<p>), headings (<h3>), and bullet lists (<ul><li>) so it can be stored as rich text. Avoid including the <html> or <body> wrappers.
+
+Details:
+${summaryLines}
+`.trim();
+
+    const completion = await openai.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: systemPrompt },
+        { role: 'user', content: userPrompt }
+      ],
+      temperature: 0.6
+    });
+
+    const draft = completion?.choices?.[0]?.message?.content;
+
+    if (!draft) {
+      return sendResponse(res, 'error', null, 'Unable to generate agreement draft', statusType.INTERNAL_SERVER_ERROR);
+    }
+
+    return sendResponse(
+      res,
+      'success',
+      { draft },
+      'Agreement draft generated successfully',
+      statusType.SUCCESS
+    );
+  } catch (error) {
+    console.error('Error generating agreement draft:', error);
+    return sendResponse(
+      res,
+      'error',
+      { error: error.message },
+      'Failed to generate agreement draft',
+      statusType.INTERNAL_SERVER_ERROR
+    );
   }
 };
 
@@ -1752,6 +1868,8 @@ export const getIntents = async (req, res) => {
         next_step: intent.ri_next_step,
         preferred_timeline: intent.ri_preferred_timeline,
         response_deadline: intent.ri_response_deadline,
+        intent_type: intent.ri_intent_type,
+        agreement_content: intent.ri_agreement_content,
         status: intent.status,
         created_at: intent.created_at,
         updated_at: intent.updated_at,
@@ -1861,6 +1979,8 @@ export const getIntentById = async (req, res) => {
       next_step: intent.ri_next_step,
       preferred_timeline: intent.ri_preferred_timeline,
       response_deadline: intent.ri_response_deadline,
+      intent_type: intent.ri_intent_type,
+      agreement_content: intent.ri_agreement_content,
       status: intent.status,
       created_at: intent.created_at,
       updated_at: intent.updated_at,
@@ -1875,7 +1995,10 @@ export const getIntentById = async (req, res) => {
         talent_summary: mapper.t_profile.tp_professional_summary,
         talent_image: mapper.t_profile.tp_image,
         talent_skills: mapper.t_profile.t_skills.map(skill => skill.ts_skill),
-        sent_at: mapper.created_at
+        sent_at: mapper.created_at,
+        agreement_snapshot: mapper.ritm_agreement_snapshot,
+        agreement_accepted_at: mapper.ritm_agreement_accepted_at,
+        agreement_accepted_by: mapper.ritm_agreement_accepted_by
       }))
     };
 
@@ -1925,6 +2048,13 @@ export const sendIntentToTalents = async (req, res) => {
     if (!intent) {
       return sendResponse(res, 'error', null, 'Intent not found or inactive', statusType.NOT_FOUND);
     }
+
+    if (intent.ri_intent_type === 'WithAgreement' && (!intent.ri_agreement_content || intent.ri_agreement_content.trim().length === 0)) {
+      return sendResponse(res, 'error', null, 'Agreement content must be provided before sending this intent', statusType.BAD_REQUEST);
+    }
+
+    const isAgreementIntent = intent.ri_intent_type === 'WithAgreement';
+    const agreementSnapshot = isAgreementIntent ? intent.ri_agreement_content : null;
 
     // Check if talents exist and are active
     const talents = await prisma.t_profile.findMany({
@@ -1984,6 +2114,7 @@ export const sendIntentToTalents = async (req, res) => {
             ri_id: parseInt(intentId),
             tp_id: parseInt(talentId),
             ritm_intent_status: 'Intent_Submitted',
+            ritm_agreement_snapshot: agreementSnapshot,
             created_by: userId.toString()
           }
         });
@@ -1993,7 +2124,7 @@ export const sendIntentToTalents = async (req, res) => {
           data: {
             ritm_id: mapper.ritm_id,
             rit_status: 'Intent_Submitted',
-            rit_notes: 'Intent sent to talent',
+            rit_notes: isAgreementIntent ? 'Intent with agreement sent to talent' : 'Intent sent to talent',
             created_by: userId.toString()
           }
         });
@@ -2353,6 +2484,7 @@ export default {
   
   // Intent management
   saveIntent,
+  generateIntentAgreementDraft,
   getIntents,
   getIntentById,
   sendIntentToTalents,

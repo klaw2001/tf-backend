@@ -27,6 +27,7 @@ export const getConversations = async (req, res) => {
               select: {
                 ri_id: true,
                 ri_job_title: true,
+                ri_intent_type: true,
                 user_id: true,
                 user: {
                   select: {
@@ -83,6 +84,8 @@ export const getConversations = async (req, res) => {
           ...otherUserProfile
         },
         jobTitle: conv.r_intent_talent_mapper.r_intent.ri_job_title,
+        intentType: conv.r_intent_talent_mapper.r_intent.ri_intent_type,
+        agreementRequired: conv.r_intent_talent_mapper.r_intent.ri_intent_type === 'WithAgreement',
         lastMessage: conv.cc_last_message,
         lastMessageAt: conv.cc_last_message_at,
         unreadCount: isRecruiter 
@@ -149,6 +152,8 @@ export const getSingleConversation = async (req, res) => {
                 ri_id: true,
                 ri_job_title: true,
                 ri_job_description: true,
+                ri_intent_type: true,
+                ri_agreement_content: true,
                 user_id: true,
                 user: {
                   select: {
@@ -200,6 +205,14 @@ export const getSingleConversation = async (req, res) => {
       otherUser,
       jobTitle: conversation.r_intent_talent_mapper.r_intent.ri_job_title,
       jobDescription: conversation.r_intent_talent_mapper.r_intent.ri_job_description,
+      intentType: conversation.r_intent_talent_mapper.r_intent.ri_intent_type,
+      agreement: {
+        required: conversation.r_intent_talent_mapper.r_intent.ri_intent_type === 'WithAgreement',
+        content: conversation.r_intent_talent_mapper.r_intent.ri_agreement_content,
+        snapshot: conversation.r_intent_talent_mapper.ritm_agreement_snapshot,
+        accepted_at: conversation.r_intent_talent_mapper.ritm_agreement_accepted_at,
+        accepted_by: conversation.r_intent_talent_mapper.ritm_agreement_accepted_by
+      },
       lastMessage: conversation.cc_last_message,
       lastMessageAt: conversation.cc_last_message_at,
       unreadCount: isRecruiter 

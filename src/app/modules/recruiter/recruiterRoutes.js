@@ -24,6 +24,7 @@ router.get('/talents/:talentId', recruiterController.getTalentProfile);
 router.post('/talents/favourite', recruiterController.addFavouriteTalent);
 
 // Intent management routes
+router.post('/intents/agreement/draft', recruiterController.generateIntentAgreementDraft);
 router.post('/intents', recruiterController.saveIntent);
 router.get('/intents', recruiterController.getIntents);
 router.get('/intents/:intentId', recruiterController.getIntentById);
