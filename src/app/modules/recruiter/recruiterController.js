@@ -621,6 +621,17 @@ export const searchTalents = async (req, res) => {
           },
           take: 5
         },
+        t_skill_tiles: {
+          where: { status: true },
+          select: {
+            tst_id: true,
+            tst_skill_name: true,
+            tst_experience: true,
+            tst_description: true,
+            tst_order: true
+          },
+          orderBy: { tst_order: 'asc' }
+        },
         t_availability: {
           where: { status: true },
           select: {
@@ -668,6 +679,7 @@ export const searchTalents = async (req, res) => {
       if (talent.tp_professional_summary) profileStrength += 15;
       if (talent.tp_image) profileStrength += 10;
       if (talent.t_skills.length > 0) profileStrength += 15;
+      if (talent.t_skill_tiles.length > 0) profileStrength += 10;
       if (talent.t_availability.length > 0) profileStrength += 10;
       if (talent.t_reviews.length > 0) profileStrength += 10;
 
@@ -709,6 +721,16 @@ export const searchTalents = async (req, res) => {
       const displaySkills = talent.t_skills.slice(0, 4).map(skill => skill.ts_skill);
       const remainingSkills = talent.t_skills.length - 4;
 
+      // Format skill tiles (anonymized skill data)
+      const skillTiles = talent.t_skill_tiles
+        .sort((a, b) => (a.tst_order || 0) - (b.tst_order || 0))
+        .map(tile => ({
+          tst_id: tile.tst_id,
+          skill_name: tile.tst_skill_name,
+          experience: tile.tst_experience,
+          description: tile.tst_description
+        }));
+
       return {
         tp_id: talent.tp_id,
         user_name: talent.user.user_full_name,
@@ -716,6 +738,7 @@ export const searchTalents = async (req, res) => {
         description: talent.tp_professional_summary || talent.tp_about || 'No description available',
         skills: displaySkills,
         remaining_skills_count: remainingSkills > 0 ? remainingSkills : 0,
+        skill_tiles: skillTiles, // Add skill tiles to search results
         profile_strength: `${profileStrength}%`,
         employment_type: employmentType,
         rate_range: rateRange,
@@ -845,20 +868,17 @@ export const getTalentProfile = async (req, res) => {
           },
           orderBy: { created_at: 'desc' }
         },
-        t_experience: {
+        t_skill_tiles: {
           where: { status: true },
           select: {
-            te_id: true,
-            te_company_name: true,
-            te_designation: true,
-            te_location: true,
-            te_start_date: true,
-            te_end_date: true,
-            te_description: true,
-            te_technologies: true,
+            tst_id: true,
+            tst_skill_name: true,
+            tst_experience: true,
+            tst_description: true,
+            tst_order: true,
             created_at: true
           },
-          orderBy: { te_start_date: 'desc' }
+          orderBy: { tst_order: 'asc' }
         },
         t_reviews: {
           where: { status: true },
@@ -887,7 +907,7 @@ export const getTalentProfile = async (req, res) => {
     if (talent.t_skills.length > 0) profileStrength += 12;
     if (talent.t_availability.length > 0) profileStrength += 10;
     if (talent.t_projects.length > 0) profileStrength += 10;
-    if (talent.t_experience.length > 0) profileStrength += 10;
+    if (talent.t_skill_tiles.length > 0) profileStrength += 10;
 
     // Calculate average rating
     const avgRating = talent.t_reviews.length > 0 
@@ -922,23 +942,15 @@ export const getTalentProfile = async (req, res) => {
       };
     });
 
-    // Format experience data
-    const experienceData = talent.t_experience.map(exp => ({
-      te_id: exp.te_id,
-      company_name: exp.te_company_name,
-      designation: exp.te_designation,
-      location: exp.te_location,
-      start_date: exp.te_start_date,
-      end_date: exp.te_end_date,
-      duration: exp.te_start_date && exp.te_end_date 
-        ? `${new Date(exp.te_start_date).getFullYear()} - ${new Date(exp.te_end_date).getFullYear()}`
-        : exp.te_start_date 
-        ? `${new Date(exp.te_start_date).getFullYear()} - Present`
-        : 'Duration not specified',
-      description: exp.te_description,
-      technologies: exp.te_technologies ? exp.te_technologies.split(',').map(tech => tech.trim()) : [],
-      created_at: exp.created_at
-    }));
+    // Format skill tiles (anonymized skill data)
+    const skillTilesData = talent.t_skill_tiles
+      .sort((a, b) => (a.tst_order || 0) - (b.tst_order || 0))
+      .map(tile => ({
+        tst_id: tile.tst_id,
+        skill_name: tile.tst_skill_name,
+        experience: tile.tst_experience,
+        description: tile.tst_description
+      }));
 
     // Format projects data
     const projectsData = talent.t_projects.map(project => ({
@@ -978,7 +990,7 @@ export const getTalentProfile = async (req, res) => {
         about: talent.tp_about,
         professional_summary: talent.tp_professional_summary,
         profile_image: talent.tp_image,
-        resume: talent.tp_resume,
+        // Note: resume is removed for anonymity
         profile_strength: `${profileStrength}%`,
         created_at: talent.created_at,
         updated_at: talent.updated_at
@@ -992,9 +1004,10 @@ export const getTalentProfile = async (req, res) => {
         member_since: talent.user.created_at
       },
       skills: skillsData,
+      skill_tiles: skillTilesData, // New: anonymized skill tiles
       availability: availabilityData,
       projects: projectsData,
-      experience: experienceData,
+      // Note: experience data removed for anonymity
       reviews: {
         data: reviewsData,
         average_rating: Math.round(avgRating * 10) / 10,
@@ -1009,7 +1022,6 @@ export const getTalentProfile = async (req, res) => {
       },
       summary: {
         total_projects: talent.t_projects.length,
-        total_experience_records: talent.t_experience.length,
         total_skills: talent.t_skills.length,
         total_reviews: talent.t_reviews.length,
         profile_completeness: profileStrength
@@ -2083,30 +2095,13 @@ export const sendIntentToTalents = async (req, res) => {
       return sendResponse(res, 'error', null, 'Some talent profiles not found or inactive', statusType.BAD_REQUEST);
     }
 
-    // Check for existing mappings to avoid duplicates
-    const existingMappings = await prisma.r_intent_talent_mapper.findMany({
-      where: {
-        ri_id: parseInt(intentId),
-        tp_id: { in: talentIds.map(id => parseInt(id)) },
-        status: true
-      },
-      select: { tp_id: true }
-    });
-
-    const existingTalentIds = existingMappings.map(mapping => mapping.tp_id);
-    const newTalentIds = talentIds.filter(id => !existingTalentIds.includes(parseInt(id)));
-
-    if (newTalentIds.length === 0) {
-      return sendResponse(res, 'error', null, 'All selected talents have already received this intent', statusType.BAD_REQUEST);
-    }
-
     // Create new mappings, timeline records, and chat conversations in a transaction
     const result = await prisma.$transaction(async (tx) => {
       const createdMappers = [];
       const createdConversations = [];
       
       // Create each mapping individually to get the ritm_id for timeline and chat creation
-      for (const talentId of newTalentIds) {
+      for (const talentId of talentIds) {
         const talent = talents.find(t => t.tp_id === parseInt(talentId));
         
         const mapper = await tx.r_intent_talent_mapper.create({
@@ -2151,7 +2146,7 @@ export const sendIntentToTalents = async (req, res) => {
 
     // Create notifications for talents
     try {
-      for (const talentId of newTalentIds) {
+      for (const talentId of talentIds) {
         const talent = talents.find(t => t.tp_id === parseInt(talentId));
         if (talent) {
           await createNotification(
@@ -2204,11 +2199,9 @@ export const sendIntentToTalents = async (req, res) => {
     const responseData = {
       intent_id: parseInt(intentId),
       total_requested: talentIds.length,
-      already_sent: existingTalentIds.length,
-      newly_sent: newTalentIds.length,
       created_mappings: result.createdMappers.length,
       created_conversations: result.createdConversations.length,
-      talent_ids_sent: newTalentIds
+      talent_ids_sent: talentIds
     };
 
     return sendResponse(res, 'success', responseData, 'Intent sent to talents successfully', statusType.SUCCESS);

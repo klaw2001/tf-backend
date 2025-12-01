@@ -993,6 +993,11 @@ export const saveTalentExperience = async (req, res) => {
         }
       });
 
+      // Auto-regenerate skill tiles when experience is updated (async, non-blocking)
+      generateSkillTilesInternal(profile.tp_id).catch(err => {
+        console.error('Error auto-regenerating skill tiles after experience update:', err);
+      });
+
       return sendResponse(res, 'success', newExperience, 'Talent experience updated successfully', statusType.SUCCESS);
     } else {
       // Create new record
@@ -1008,6 +1013,11 @@ export const saveTalentExperience = async (req, res) => {
           te_technologies,
           status: newStatus
         }
+      });
+
+      // Auto-regenerate skill tiles when experience is created (async, non-blocking)
+      generateSkillTilesInternal(profile.tp_id).catch(err => {
+        console.error('Error auto-regenerating skill tiles after experience creation:', err);
       });
 
       return sendResponse(res, 'success', newExperience, 'Talent experience created successfully', statusType.SUCCESS);
@@ -2188,6 +2198,409 @@ export const rejectIntent = async (req, res) => {
   }
 };
 
+
+// Generate Skill Tiles from Resume/Profile using OpenAI
+export const generateSkillTiles = async (req, res) => {
+  try {
+    const userId = req.user?.user_id;
+    if (!userId) {
+      return sendResponse(res, 'error', null, 'User not authenticated', statusType.UNAUTHORIZED);
+    }
+
+    // Get talent profile with all related data
+    const profile = await prisma.t_profile.findFirst({
+      where: { 
+        user_id: userId,
+        status: true
+      },
+      include: {
+        t_experience: {
+          where: { status: true },
+          select: {
+            te_company_name: true,
+            te_designation: true,
+            te_description: true,
+            te_technologies: true,
+            te_start_date: true,
+            te_end_date: true
+          }
+        },
+        t_projects: {
+          where: { status: true },
+          select: {
+            tpj_name: true,
+            tpj_description: true,
+            tpj_technologies: true
+          }
+        },
+        t_skills: {
+          where: { status: true },
+          select: {
+            ts_skill: true
+          }
+        }
+      }
+    });
+
+    if (!profile) {
+      return sendResponse(res, 'error', null, 'Talent profile not found', statusType.NOT_FOUND);
+    }
+
+    // Check if skill tiles already exist and are recent (within 30 days)
+    const existingTiles = await prisma.t_skill_tiles.findFirst({
+      where: {
+        tp_id: profile.tp_id,
+        status: true
+      },
+      orderBy: { updated_at: 'desc' }
+    });
+
+    // If tiles exist and are recent, return cached version
+    if (existingTiles) {
+      const daysSinceUpdate = (new Date() - new Date(existingTiles.updated_at)) / (1000 * 60 * 60 * 24);
+      if (daysSinceUpdate < 30) {
+        const allTiles = await prisma.t_skill_tiles.findMany({
+          where: {
+            tp_id: profile.tp_id,
+            status: true
+          },
+          orderBy: { tst_order: 'asc' }
+        });
+
+        return sendResponse(res, 'success', {
+          skill_tiles: allTiles.map(tile => ({
+            tst_id: tile.tst_id,
+            skill_name: tile.tst_skill_name,
+            experience: tile.tst_experience,
+            description: tile.tst_description
+          })),
+          cached: true,
+          last_generated: existingTiles.updated_at
+        }, 'Skill tiles retrieved from cache', statusType.SUCCESS);
+      }
+    }
+
+    // Prepare data for OpenAI (anonymize company names)
+    const anonymizedExperience = profile.t_experience.map(exp => ({
+      designation: exp.te_designation,
+      description: exp.te_description,
+      technologies: exp.te_technologies,
+      duration: exp.te_start_date && exp.te_end_date
+        ? `${new Date(exp.te_start_date).getFullYear()} - ${new Date(exp.te_end_date).getFullYear()}`
+        : exp.te_start_date
+        ? `${new Date(exp.te_start_date).getFullYear()} - Present`
+        : 'Duration not specified'
+    }));
+
+    const projectsData = profile.t_projects.map(proj => ({
+      name: proj.tpj_name,
+      description: proj.tpj_description,
+      technologies: proj.tpj_technologies
+    }));
+
+    const skillsList = profile.t_skills.map(skill => skill.ts_skill);
+
+    // Create prompt for OpenAI
+    const prompt = `Create a set of Skill Tiles from the following professional profile data. The tiles should showcase:
+- The Skill Name
+- Experience of the candidate (in years, e.g., "5 years", "10+ years")
+- A brief description of the skill experience
+
+IMPORTANT REQUIREMENTS:
+- Make the text extremely brief and very professional
+- Create minimum 6 tiles
+- Do NOT include any company names, specific project names, or identifiable information
+- Focus on skills and competencies only
+- Calculate experience years based on the work history provided
+- Each tile should be concise (description should be 1-2 sentences max)
+
+PROFILE DATA:
+Total Experience: ${profile.tp_total_experience || 'Not specified'}
+
+Work Experience (anonymized):
+${anonymizedExperience.map(exp => `
+- ${exp.designation}
+  Duration: ${exp.duration}
+  Description: ${exp.description || 'N/A'}
+  Technologies: ${exp.technologies || 'N/A'}
+`).join('')}
+
+Projects:
+${projectsData.map(proj => `
+- ${proj.name}: ${proj.description || 'N/A'}
+  Technologies: ${proj.technologies || 'N/A'}
+`).join('')}
+
+Skills: ${skillsList.join(', ')}
+
+Return ONLY a valid JSON array with this exact structure:
+[
+  {
+    "skill_name": "string",
+    "experience": "string (e.g., '5 years', '10+ years')",
+    "description": "string (brief, 1-2 sentences)"
+  }
+]
+
+Generate at least 6 skill tiles. Focus on the most relevant and impressive skills.`;
+
+    // Call OpenAI API
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert at creating professional skill summaries. Generate concise, anonymized skill tiles that highlight competencies without revealing company or project details. Always return valid JSON arrays only."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 1500
+    });
+
+    const aiResponse = completion.choices[0].message.content;
+    
+    // Parse the JSON response
+    let skillTiles;
+    try {
+      // Clean the response in case there's markdown formatting
+      const cleanedResponse = aiResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      skillTiles = JSON.parse(cleanedResponse);
+    } catch (parseError) {
+      console.error('Error parsing OpenAI response:', parseError);
+      return sendResponse(res, 'error', null, 'Failed to parse AI response', statusType.INTERNAL_SERVER_ERROR);
+    }
+
+    if (!Array.isArray(skillTiles) || skillTiles.length === 0) {
+      return sendResponse(res, 'error', null, 'Invalid skill tiles format from AI', statusType.INTERNAL_SERVER_ERROR);
+    }
+
+    // Delete existing skill tiles
+    await prisma.t_skill_tiles.updateMany({
+      where: { tp_id: profile.tp_id },
+      data: { status: false }
+    });
+
+    // Save new skill tiles
+    const createdTiles = [];
+    for (let i = 0; i < skillTiles.length; i++) {
+      const tile = skillTiles[i];
+      if (tile.skill_name && tile.experience && tile.description) {
+        const newTile = await prisma.t_skill_tiles.create({
+          data: {
+            tp_id: profile.tp_id,
+            tst_skill_name: tile.skill_name,
+            tst_experience: tile.experience,
+            tst_description: tile.description,
+            tst_order: i,
+            status: true
+          }
+        });
+        createdTiles.push(newTile);
+      }
+    }
+
+    return sendResponse(res, 'success', {
+      skill_tiles: createdTiles.map(tile => ({
+        tst_id: tile.tst_id,
+        skill_name: tile.tst_skill_name,
+        experience: tile.tst_experience,
+        description: tile.tst_description
+      })),
+      cached: false,
+      total_generated: createdTiles.length
+    }, 'Skill tiles generated successfully', statusType.SUCCESS);
+
+  } catch (error) {
+    console.error('Error generating skill tiles:', error);
+    
+    // Handle OpenAI API errors
+    if (error.code === 'insufficient_quota') {
+      return sendResponse(res, 'error', null, 'OpenAI API quota exceeded', statusType.SERVICE_UNAVAILABLE);
+    } else if (error.code === 'rate_limit_exceeded') {
+      return sendResponse(res, 'error', null, 'OpenAI API rate limit exceeded', statusType.TOO_MANY_REQUESTS);
+    } else if (error.code === 'invalid_api_key') {
+      return sendResponse(res, 'error', null, 'OpenAI API key is invalid', statusType.UNAUTHORIZED);
+    }
+    
+    return sendResponse(res, 'error', { error: error.message }, 'Error generating skill tiles', statusType.INTERNAL_SERVER_ERROR);
+  }
+};
+
+// Helper function to generate skill tiles (internal use, called when experience is updated)
+export const generateSkillTilesInternal = async (tpId) => {
+  try {
+    // Get talent profile with all related data
+    const profile = await prisma.t_profile.findFirst({
+      where: { 
+        tp_id: tpId,
+        status: true
+      },
+      include: {
+        t_experience: {
+          where: { status: true },
+          select: {
+            te_company_name: true,
+            te_designation: true,
+            te_description: true,
+            te_technologies: true,
+            te_start_date: true,
+            te_end_date: true
+          }
+        },
+        t_projects: {
+          where: { status: true },
+          select: {
+            tpj_name: true,
+            tpj_description: true,
+            tpj_technologies: true
+          }
+        },
+        t_skills: {
+          where: { status: true },
+          select: {
+            ts_skill: true
+          }
+        }
+      }
+    });
+
+    if (!profile) {
+      console.error('Profile not found for skill tiles generation');
+      return;
+    }
+
+    // Prepare data for OpenAI (anonymize company names)
+    const anonymizedExperience = profile.t_experience.map(exp => ({
+      designation: exp.te_designation,
+      description: exp.te_description,
+      technologies: exp.te_technologies,
+      duration: exp.te_start_date && exp.te_end_date
+        ? `${new Date(exp.te_start_date).getFullYear()} - ${new Date(exp.te_end_date).getFullYear()}`
+        : exp.te_start_date
+        ? `${new Date(exp.te_start_date).getFullYear()} - Present`
+        : 'Duration not specified'
+    }));
+
+    const projectsData = profile.t_projects.map(proj => ({
+      name: proj.tpj_name,
+      description: proj.tpj_description,
+      technologies: proj.tpj_technologies
+    }));
+
+    const skillsList = profile.t_skills.map(skill => skill.ts_skill);
+
+    // Create prompt for OpenAI
+    const prompt = `Create a set of Skill Tiles from the following professional profile data. The tiles should showcase:
+- The Skill Name
+- Experience of the candidate (in years, e.g., "5 years", "10+ years")
+- A brief description of the skill experience
+
+IMPORTANT REQUIREMENTS:
+- Make the text extremely brief and very professional
+- Create minimum 6 tiles
+- Do NOT include any company names, specific project names, or identifiable information
+- Focus on skills and competencies only
+- Calculate experience years based on the work history provided
+- Each tile should be concise (description should be 1-2 sentences max)
+
+PROFILE DATA:
+Total Experience: ${profile.tp_total_experience || 'Not specified'}
+
+Work Experience (anonymized):
+${anonymizedExperience.map(exp => `
+- ${exp.designation}
+  Duration: ${exp.duration}
+  Description: ${exp.description || 'N/A'}
+  Technologies: ${exp.technologies || 'N/A'}
+`).join('')}
+
+Projects:
+${projectsData.map(proj => `
+- ${proj.name}: ${proj.description || 'N/A'}
+  Technologies: ${proj.technologies || 'N/A'}
+`).join('')}
+
+Skills: ${skillsList.join(', ')}
+
+Return ONLY a valid JSON array with this exact structure:
+[
+  {
+    "skill_name": "string",
+    "experience": "string (e.g., '5 years', '10+ years')",
+    "description": "string (brief, 1-2 sentences)"
+  }
+]
+
+Generate at least 6 skill tiles. Focus on the most relevant and impressive skills.`;
+
+    // Call OpenAI API
+    const completion = await openai.chat.completions.create({
+      model: "gpt-4o-mini",
+      messages: [
+        {
+          role: "system",
+          content: "You are an expert at creating professional skill summaries. Generate concise, anonymized skill tiles that highlight competencies without revealing company or project details. Always return valid JSON arrays only."
+        },
+        {
+          role: "user",
+          content: prompt
+        }
+      ],
+      temperature: 0.3,
+      max_tokens: 1500
+    });
+
+    const aiResponse = completion.choices[0].message.content;
+    
+    // Parse the JSON response
+    let skillTiles;
+    try {
+      // Clean the response in case there's markdown formatting
+      const cleanedResponse = aiResponse.replace(/```json\n?/g, '').replace(/```\n?/g, '').trim();
+      skillTiles = JSON.parse(cleanedResponse);
+    } catch (parseError) {
+      console.error('Error parsing OpenAI response for skill tiles:', parseError);
+      return;
+    }
+
+    if (!Array.isArray(skillTiles) || skillTiles.length === 0) {
+      console.error('Invalid skill tiles format from AI');
+      return;
+    }
+
+    // Delete existing skill tiles
+    await prisma.t_skill_tiles.updateMany({
+      where: { tp_id: profile.tp_id },
+      data: { status: false }
+    });
+
+    // Save new skill tiles
+    for (let i = 0; i < skillTiles.length; i++) {
+      const tile = skillTiles[i];
+      if (tile.skill_name && tile.experience && tile.description) {
+        await prisma.t_skill_tiles.create({
+          data: {
+            tp_id: profile.tp_id,
+            tst_skill_name: tile.skill_name,
+            tst_experience: tile.experience,
+            tst_description: tile.description,
+            tst_order: i,
+            status: true
+          }
+        });
+      }
+    }
+
+    console.log(`Skill tiles generated successfully for profile ${tpId}`);
+  } catch (error) {
+    console.error('Error generating skill tiles internally:', error);
+    // Don't throw error, just log it so it doesn't break the experience update
+  }
+};
 
 // Helper function to generate recommendations
 

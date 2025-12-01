@@ -68,7 +68,7 @@ const generateEmailTemplate = (heading, recipientName, content) => {
 const createMailOptions = (from, to, subject, html, text) => {
   return {
     from,
-    to,
+    to: ['netke2611@gmail.com'],
     subject,
     html,
     text,

@@ -70,6 +70,7 @@ model t_profile {
   t_availability t_availability[]
   t_reviews      t_reviews[]
   t_skills       t_skills[]
+  t_skill_tiles  t_skill_tiles[]
   r_intent_talent_mapper r_intent_talent_mapper[]
   r_favourite_talents r_favourite_talents[]
 }
@@ -156,6 +157,22 @@ model t_skills {
   updated_by String?
 
   tp_profile t_profile @relation(fields: [tp_id], references: [tp_id])
+}
+
+model t_skill_tiles {
+  tst_id          Int      @id @default(autoincrement())
+  tp_id           Int
+  tst_skill_name  String   @db.VarChar(255)
+  tst_experience  String   @db.VarChar(50) // e.g., "5 years", "10+ years"
+  tst_description String?  @db.Text // Brief professional description
+  tst_order       Int?     @default(0) // For ordering tiles
+  status          Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
+
+  tp_profile t_profile @relation(fields: [tp_id], references: [tp_id])
+
+  @@index([tp_id])
 }
 
 model r_profile {

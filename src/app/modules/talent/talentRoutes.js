@@ -13,6 +13,9 @@ router.post('/parse-resume', talentController.parseResume);
 // Professional summary generation route
 router.post('/generate-professional-summary', talentController.generateProfessionalSummary);
 
+// Skill tiles generation route
+router.post('/generate-skill-tiles', talentController.generateSkillTiles);
+
 // Profile routes
 router.get('/profile', talentController.getAllTalentProfile);
 router.get('/projects', talentController.getAllTalentProjects);

@@ -13,6 +13,7 @@ import { OPENAI_API_KEY } from '../../../config/index.js';
 import { sendNotificationEmail } from '../../helpers/emailHelper.js';
 import { PDFParse } from 'pdf-parse';
 import { readFile } from 'node:fs/promises';
+import { generateSkillTilesInternal } from '../talent/talentController.js';
 
 
 const prisma = new PrismaClient();
@@ -536,6 +537,15 @@ Analyze the resume content thoroughly and provide accurate, professional assessm
             createdSkills.push(newSkill);
           }
         }
+      }
+
+      // Generate skill tiles after experience and skills are created
+      // This runs asynchronously and won't block the signup process
+      if (createdExperience.length > 0 || createdSkills.length > 0) {
+        generateSkillTilesInternal(talentProfile.tp_id).catch(err => {
+          console.error('Error generating skill tiles during signup:', err);
+          // Don't fail signup if skill tiles generation fails
+        });
       }
 
       // Store parsed data for response
