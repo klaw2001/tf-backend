@@ -8,7 +8,7 @@ let io;
 export const initializeSocket = (httpServer) => {
   io = new Server(httpServer, {
     cors: {
-      origin: ['http://localhost:3000', 'http://localhost:4000', 'https://stg.talentflip.ai'],
+      origin: ['http://localhost:3000', 'http://localhost:4000', 'https://stg-web.talentflip.ai','https://stg-app.talentflip.ai'],
       credentials: true,
       methods: ['GET', 'POST']
     },
