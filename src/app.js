@@ -17,7 +17,7 @@ const app = express();
 
 // Middleware
 app.use(cors({
-  origin: ['http://localhost:3000', 'http://localhost:4000', 'https://stg.talentflip.ai'],
+  origin: ['http://localhost:3000', 'http://localhost:4000', 'https://stg-web.talentflip.ai'],
   credentials: true
 }));
 
